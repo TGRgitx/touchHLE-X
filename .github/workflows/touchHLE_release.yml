@@ -99,8 +99,8 @@ jobs:
     # actions/checkout really doesn't work well with git-describe for some
     # reason (most likely it strips the annotation off the tag somehow).
     - name: Checkout touchHLE
-        shell: bash
-        run: |
+      shell: bash
+      run: |
           mkdir -p "$GITHUB_WORKSPACE"
           git clone "${{ github.server_url }}/${{ github.repository }}" "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
@@ -197,8 +197,8 @@ jobs:
     # actions/checkout really doesn't work well with git-describe for some
     # reason (most likely it strips the annotation off the tag somehow).
     - name: Checkout touchHLE
-        shell: bash
-        run: |
+      shell: bash
+      run: |
           mkdir -p "$GITHUB_WORKSPACE"
           git clone "${{ github.server_url }}/${{ github.repository }}" "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
