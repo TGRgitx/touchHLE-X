@@ -93,7 +93,7 @@ make_integer_accessor!(get_weekday, set_weekday, weekday);
 make_integer_accessor!(get_weekday_ordinal, set_weekday_ordinal, weekday_ordinal);
 
 // --------------------
-// Registration Export for touchHLE
+// Registration
 // --------------------
 fn register(objc: &mut ObjC, class: Class) -> Class {
     class.add_class_method("alloc", alloc_components);
@@ -135,4 +135,3 @@ pub const CLASSES: ClassExports = &[crate::dyld::ClassExport {
     superclass_name: "NSObject",
     init_fn: Some(register),
 }];
-
