@@ -1,5 +1,6 @@
 //! Stub for NSUbiquitousKeyValueStore (iCloud key-value storage) for touchHLE
-//! Used to prevent the game from crashing when calling defaultStore and working with settings
+//! Used to prevent the game from crashing when calling defaultStore
+//! and working with settings.
 
 use crate::objc::{ObjC, Class, id, nil, impl_HostObject_with_superclass, HostObject};
 use crate::objc::objects::TrivialHostObject;
