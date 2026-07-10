@@ -11,6 +11,17 @@ use crate::dyld::ClassExports;
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
 const NS_UNDEFINED: isize = 0x7fffffff;
 
+//! Exact impl of NSDateComponents.
+//! Conforming to iOS 3.0+ Foundation specifications.
+
+use crate::dyld::ClassExports;
+use crate::mem::Mem;
+use crate::objc::objects::TrivialHostObject;
+use crate::objc::{id, impl_HostObject_with_superclass, nil, Class, HostObject, ObjC};
+
+/// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
+const NS_UNDEFINED: isize = 0x7fffffff;
+
 pub struct NSDateComponentsHostObject {
     pub superclass: TrivialHostObject,
     pub calendar: id,
@@ -65,7 +76,8 @@ pub fn get_time_zone(objc: &mut ObjC, this: id, _: &mut Mem) -> id {
     objc.borrow::<NSDateComponentsHostObject>(this).time_zone
 }
 pub fn set_time_zone(objc: &mut ObjC, this: id, val: id, _: &mut Mem) {
-    objc.borrow_mut::<NSDateComponentsHostObject>(this).time_zone = val;
+    objc.borrow_mut::<NSDateComponentsHostObject>(this)
+        .time_zone = val;
 }
 
 // --------------------
