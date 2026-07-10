@@ -1,23 +1,12 @@
 //! Exact impl of NSDateComponents.
-//! Conforming to iOS 3.0+ Foundation specifications.
+// Conforming to iOS 3.0+ Foundation specifications.
 
+use crate::dyld::ClassExports;
+use crate::mem::Mem;
+use crate::objc::objects::TrivialHostObject;
 use crate::objc::{
-    ObjC, Class, id, nil, impl_HostObject_with_superclass, HostObject
+    id, impl_HostObject_with_superclass, nil, Class, HostObject, ObjC,
 };
-use crate::objc::objects::TrivialHostObject;
-use crate::mem::Mem;
-use crate::dyld::ClassExports;
-
-/// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
-const NS_UNDEFINED: isize = 0x7fffffff;
-
-//! Exact impl of NSDateComponents.
-//! Conforming to iOS 3.0+ Foundation specifications.
-
-use crate::dyld::ClassExports;
-use crate::mem::Mem;
-use crate::objc::objects::TrivialHostObject;
-use crate::objc::{id, impl_HostObject_with_superclass, nil, Class, HostObject, ObjC};
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
 const NS_UNDEFINED: isize = 0x7fffffff;
@@ -103,10 +92,14 @@ make_integer_accessor!(get_minute, set_minute, minute);
 make_integer_accessor!(get_second, set_second, second);
 make_integer_accessor!(get_week, set_week, week);
 make_integer_accessor!(get_weekday, set_weekday, weekday);
-make_integer_accessor!(get_weekday_ordinal, set_weekday_ordinal, weekday_ordinal);
+make_integer_accessor!(
+    get_weekday_ordinal,
+    set_weekday_ordinal,
+    weekday_ordinal
+);
 
 // --------------------
-// Registration
+// Registration Export for touchHLE
 // --------------------
 fn register(objc: &mut ObjC, class: Class) -> Class {
     class.add_class_method("alloc", alloc_components);
