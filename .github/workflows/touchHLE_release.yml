@@ -19,10 +19,10 @@ jobs:
       # actions/checkout really doesn't work well with git-describe for some
       # reason (most likely it strips the annotation off the tag somehow).
       - name: Checkout touchHLE
-        shell: bash # windows :)
+        shell: bash
         run: |
           mkdir -p "$GITHUB_WORKSPACE"
-          git clone https://github.com/touchHLE/touchHLE "$GITHUB_WORKSPACE"
+          git clone "${{ github.server_url }}/${{ github.repository }}" "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
           git fetch origin "$GITHUB_REF"
           git checkout "$GITHUB_SHA" # avoid race condition if branch/tag changes
@@ -99,13 +99,13 @@ jobs:
     # actions/checkout really doesn't work well with git-describe for some
     # reason (most likely it strips the annotation off the tag somehow).
     - name: Checkout touchHLE
-      shell: bash # windows :)
-      run: |
-        mkdir -p "$GITHUB_WORKSPACE"
-        git clone https://github.com/touchHLE/touchHLE "$GITHUB_WORKSPACE"
-        cd "$GITHUB_WORKSPACE"
-        git fetch origin "$GITHUB_REF"
-        git checkout "$GITHUB_SHA" # avoid race condition if branch/tag changes
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE"
+          git clone "${{ github.server_url }}/${{ github.repository }}" "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git fetch origin "$GITHUB_REF"
+          git checkout "$GITHUB_SHA" # avoid race condition if branch/tag changes
     - name: Check formatting
       run: dev-scripts/format.sh --check
     - name: Get Submodules
@@ -197,13 +197,13 @@ jobs:
     # actions/checkout really doesn't work well with git-describe for some
     # reason (most likely it strips the annotation off the tag somehow).
     - name: Checkout touchHLE
-      shell: bash # windows :)
-      run: |
-        mkdir -p "$GITHUB_WORKSPACE"
-        git clone https://github.com/touchHLE/touchHLE "$GITHUB_WORKSPACE"
-        cd "$GITHUB_WORKSPACE"
-        git fetch origin "$GITHUB_REF"
-        git checkout "$GITHUB_SHA" # avoid race condition if branch/tag changes
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE"
+          git clone "${{ github.server_url }}/${{ github.repository }}" "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git fetch origin "$GITHUB_REF"
+          git checkout "$GITHUB_SHA" # avoid race condition if branch/tag changes
     # Apparently the Windows runner already has clang-format? That's nice.
     - name: Check formatting
       shell: bash # no command output without this
