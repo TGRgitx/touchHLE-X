@@ -10,13 +10,15 @@
 
 mod path_algorithms;
 
-use super::{ns_array, unichar, NSInteger, _nib_archive_decoder};
+use super::ns_keyed_archiver::set_value_to_encode_for_current_key;
+use super::{ns_array, ns_keyed_unarchiver};
 use super::{
-    NSComparisonResult, NSNotFound, NSOrderedAscending, NSOrderedDescending, NSOrderedSame,
-    NSRange, NSUInteger,
+    unichar, NSComparisonResult, NSInteger, NSNotFound, NSOrderedAscending, NSOrderedDescending,
+    NSOrderedSame, NSRange, NSUInteger,
 };
 use crate::abi::VaList;
 use crate::frameworks::core_graphics::{CGFloat, CGPoint, CGRect, CGSize};
+use crate::frameworks::foundation::_nib_archive_decoder;
 use crate::frameworks::uikit::ui_font::{
     self, UILineBreakMode, UILineBreakModeWordWrap, UITextAlignment, UITextAlignmentLeft,
 };
@@ -28,13 +30,12 @@ use crate::objc::{
     HostObject, NSZonePtr, ObjC,
 };
 use crate::{fs, Environment};
-use encoding_rs::SHIFT_JIS;
+use encoding_rs::{SHIFT_JIS, WINDOWS_1252};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
 use std::iter::Peekable;
 use std::string::FromUtf16Error;
-use yore::code_pages::CP1252;
 
 pub type NSStringEncoding = NSUInteger;
 pub const NSASCIIStringEncoding: NSUInteger = 1;
@@ -122,9 +123,10 @@ impl StringHostObject {
                 StringHostObject::Utf8(Cow::Owned(string))
             }
             NSWindowsCP1252StringEncoding => {
-                // TODO: use encoding_rs
-                let string = CP1252.decode(&bytes).to_string();
-                StringHostObject::Utf8(Cow::Owned(string))
+                let (cow, encoding_used, had_errors) = WINDOWS_1252.decode(&bytes);
+                assert_eq!(encoding_used, WINDOWS_1252);
+                assert!(!had_errors);
+                StringHostObject::Utf8(Cow::Owned(cow.into_owned()))
             }
             NSShiftJISStringEncoding => {
                 let (cow, encoding_used, had_errors) = SHIFT_JIS.decode(&bytes);
@@ -225,7 +227,11 @@ impl Clone for CodeUnitIterator<'_> {
 impl CodeUnitIterator<'_> {
     /// If the sequence of code units in `prefix` is a prefix of `self`,
     /// return [Some] with `self` advanced past that prefix, otherwise [None].
-    fn strip_prefix(&self, prefix: &CodeUnitIterator) -> Option<Self> {
+    ///
+    /// Code units comparison is done conditional to `case_insensitive` bool:
+    /// if it's true, the code units are converted to chars first and compared
+    /// as lowercase variants, otherwise the match is exact.
+    fn strip_prefix(&self, prefix: &CodeUnitIterator, case_insensitive: bool) -> Option<Self> {
         let mut self_match = self.clone();
         let mut prefix_match = prefix.clone();
         loop {
@@ -235,7 +241,18 @@ impl CodeUnitIterator<'_> {
                 }
                 Some(prefix_c) => {
                     let self_c = self_match.next();
-                    if self_c != Some(prefix_c) {
+                    if case_insensitive {
+                        self_c?;
+                        let (Some(a_c), Some(b_c)) = (
+                            char::from_u32(self_c.unwrap() as u32),
+                            char::from_u32(prefix_c as u32),
+                        ) else {
+                            panic!("Invalid chars in the strings!");
+                        };
+                        if !a_c.to_lowercase().eq(b_c.to_lowercase()) {
+                            return None;
+                        }
+                    } else if self_c != Some(prefix_c) {
                         return None;
                     }
                 }
@@ -262,8 +279,16 @@ pub fn with_format(env: &mut Environment, format: id, args: VaList) -> String {
         },
         args,
     );
-    // TODO: what if it's not valid UTF-8?
-    String::from_utf8(res).unwrap()
+    match String::from_utf8_lossy(&res) {
+        Cow::Borrowed(str) => str.to_owned(),
+        Cow::Owned(string) => {
+            // TODO: Support UTF-16 printf directly
+            log!(
+                "Warning: invalid UTF-8 sequence replaced with U+FFFD in UTF-16 string formatting"
+            );
+            string
+        }
+    }
 }
 
 pub fn from_rust_ordering(ordering: std::cmp::Ordering) -> NSComparisonResult {
@@ -344,6 +369,16 @@ pub const CLASSES: ClassExports = objc_classes! {
     autorelease(env, new)
 }
 
++ (id)stringWithContentsOfURL:(id)url // NSURL*
+                     encoding:(NSStringEncoding)encoding
+                         error:(MutPtr<id>)error { // NSError**
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithContentsOfURL:url
+                                             encoding:encoding
+                                                error:error];
+    autorelease(env, new)
+}
+
 + (id)stringWithFormat:(id)format, // NSString*
                        ...args {
     let res = with_format(env, format, args.start());
@@ -363,13 +398,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 + (id)pathWithComponents:(id)components {
     let count: NSUInteger = msg![env; components count];
     if count == 0 {
-        return nil;
+        return get_static_str(env, "");
     }
     let mut res = msg_class![env; NSString new];
     let enumerator: id = msg![env; components objectEnumerator];
-    // FIXME: remove duplicate path separators
-    // While Apple's docs claim that "This method doesn’t clean up the path
-    // created", it seems that duplicate path separators are removed.
     loop {
         let next: id = msg![env; enumerator nextObject];
         if next == nil {
@@ -382,9 +414,11 @@ pub const CLASSES: ClassExports = objc_classes! {
         // FIXME: this leads to O(N^2) for N char string, but it should be O(N)
         res = msg![env; res stringByAppendingPathComponent:next];
     }
-    // Note: we need to strip leading "/"
-    // because we started from an empty string
-    msg![env; res substringFromIndex:1u32]
+    log_dbg!("pathWithComponents: {} -> '{}'", {
+        let desc = msg![env; components description];
+        to_rust_string(env, desc)
+    }, to_rust_string(env, res));
+    res
 }
 
 + (NSStringEncoding)defaultCStringEncoding {
@@ -453,6 +487,16 @@ pub const CLASSES: ClassExports = objc_classes! {
     utf16[index as usize]
 }
 
+- (NSUInteger)lengthOfBytesUsingEncoding:(NSStringEncoding)encoding {
+    if C_STRING_FRIENDLY_ENCODINGS.contains(&encoding) {
+        let string = to_rust_string(env, this);
+        assert!(string.as_bytes().iter().all(|byte| byte.is_ascii())); // TODO
+        string.len().try_into().unwrap()
+    } else {
+        unimplemented!("lengthOfBytesUsingEncoding: {}", encoding)
+    }
+}
+
 - (NSRange)rangeOfString:(id)search_string {
     msg![env; this rangeOfString:search_string options:0u32]
 }
@@ -500,6 +544,19 @@ pub const CLASSES: ClassExports = objc_classes! {
             }
         },
         _ => unimplemented!("options {}", options)
+    }
+    NSRange { location: NSNotFound as NSUInteger, length: 0 }
+}
+
+- (NSRange)rangeOfCharacterFromSet:(id)set { // NSCharacterSet *
+    let length: NSUInteger = msg![env; this length];
+    let mut idx: NSUInteger = 0;
+    while idx < length {
+        let c: u16 = msg![env; this characterAtIndex:idx];
+        if msg![env; set characterIsMember:c] {
+            return NSRange { location: idx, length: 1 };
+        }
+        idx += 1;
     }
     NSRange { location: NSNotFound as NSUInteger, length: 0 }
 }
@@ -664,6 +721,13 @@ pub const CLASSES: ClassExports = objc_classes! {
     str_mut
 }
 
+- (bool)getFileSystemRepresentation:(MutPtr<u8>)buffer
+                          maxLength:(NSUInteger)buffer_size {
+    msg![env; this getCString:buffer
+                    maxLength:buffer_size
+                     encoding:NSUTF8StringEncoding]
+}
+
 - (bool)getCString:(MutPtr<u8>)buffer
          maxLength:(NSUInteger)buffer_size
           encoding:(NSStringEncoding)encoding {
@@ -694,7 +758,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     let mut components = Vec::<Utf16String>::new();
     let mut current_component: Utf16String = Vec::new();
     loop {
-        if let Some(new_main_iter) = main_iter.strip_prefix(&sep_iter) {
+        if let Some(new_main_iter) = main_iter.strip_prefix(&sep_iter, /* case_insensitive: */ false) {
             // matched separator, end current component
             components.push(std::mem::take(&mut current_component));
             main_iter = new_main_iter;
@@ -852,39 +916,26 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (id)stringByReplacingOccurrencesOfString:(id)target // NSString*
                                 withString:(id)replacement { // NSString*
-    // TODO: support foreign subclasses (perhaps via a helper function that
-    // copies the string first)
-    let mut main_iter = env.objc.borrow::<StringHostObject>(this)
-        .iter_code_units();
-    let target_iter = env.objc.borrow::<StringHostObject>(target)
-        .iter_code_units();
-    let replacement_iter = env.objc.borrow::<StringHostObject>(replacement)
-        .iter_code_units();
+    let length: NSUInteger = msg![env; this length];
+    let range = NSRange { location: 0, length };
+    msg![env; this stringByReplacingOccurrencesOfString:target
+                                             withString:replacement
+                                                options:0u32
+                                                  range:range]
+}
 
-    // TODO: zero-length target support?
-    assert!(target_iter.clone().next().is_some());
-
-    let mut result: Utf16String = Vec::new();
-    loop {
-        if let Some(new_main_iter) = main_iter.strip_prefix(&target_iter) {
-            // matched target, replace it
-            result.extend(replacement_iter.clone());
-            main_iter = new_main_iter;
-        } else {
-            // no match, copy as normal
-            match main_iter.next() {
-                Some(cur) => result.push(cur),
-                None => break,
-            }
-        }
-    }
-
-    // TODO: For a foreign subclass of NSString, do we have to return that
-    // subclass? The signature implies this isn't the case and it's probably not
-    // worth the effort, but it's an interesting question.
-    let result_ns_string = msg_class![env; _touchHLE_NSString alloc];
-    *env.objc.borrow_mut(result_ns_string) = StringHostObject::Utf16(result);
-    autorelease(env, result_ns_string)
+- (id)stringByReplacingOccurrencesOfString:(id)target // NSString*
+                                withString:(id)replacement // NSString*
+                                   options:(NSStringCompareOptions)options
+                                     range:(NSRange)range {
+    let loc = range.location;
+    let len = range.length;
+    let left: id = msg![env; this substringToIndex:loc];
+    let middle: id = msg![env; this substringWithRange:range];
+    let right: id = msg![env; this substringFromIndex:(loc + len)];
+    let new_middle: id = string_by_replacing_occurrences_inner(env, middle, target, replacement, options);
+    let res: id = msg![env; left stringByAppendingString:new_middle];
+    msg![env; res stringByAppendingString:right]
 }
 
 - (id)stringByAppendingString:(id)other { // NSString*
@@ -1279,8 +1330,11 @@ pub const CLASSES: ClassExports = objc_classes! {
 // NSCoding implementation
 - (id)initWithCoder:(id)coder {
     let class: Class = msg![env; coder class];
+    let keyed_unarch_class: Class = msg_class![env; NSKeyedUnarchiver class];
     let nib_archive_class: Class = msg_class![env; _touchHLE_NIBArchiveDecoder class];
-    let new_str = if env.objc.class_is_subclass_of(class, nib_archive_class) {
+    let new_str = if env.objc.class_is_subclass_of(class, keyed_unarch_class) {
+        ns_keyed_unarchiver::decode_current_string(env, coder)
+    } else if env.objc.class_is_subclass_of(class, nib_archive_class) {
         _nib_archive_decoder::decode_current_string(env, coder)
     } else {
         unimplemented!();
@@ -1288,9 +1342,21 @@ pub const CLASSES: ClassExports = objc_classes! {
     release(env, this);
     new_str
 }
+- (())encodeWithCoder:(id)coder {
+    let string = to_rust_string(env, this);
+    assert!(string.as_bytes().iter().all(|byte| byte.is_ascii())); // TODO
+
+    // TODO: use some kind of substitution instead?
+    // See "Making Substitutions During Coding" in the doc https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Archiving/Articles/codingobjects.html
+    set_value_to_encode_for_current_key(env, coder, plist::Value::String(string.to_string()));
+}
 
 - (id)initWithData:(id)data // NSData *
           encoding:(NSStringEncoding)encoding {
+    if data == nil {
+        release(env, this);
+        return nil;
+    }
     let bytes: ConstVoidPtr = msg![env; data bytes];
     let bytes: ConstPtr<u8> = bytes.cast();
     let length: NSUInteger = msg![env; data length];
@@ -1368,15 +1434,27 @@ pub const CLASSES: ClassExports = objc_classes! {
     let path = to_rust_string(env, path);
     let Ok(bytes) = env.fs.read(GuestPath::new(&path)) else {
         assert!(error.is_null()); // TODO: error handling
+        release(env, this);
         return nil;
     };
 
     // TODO: error handling for encoding
     let host_object = StringHostObject::decode(Cow::Owned(bytes), encoding);
-
     *env.objc.borrow_mut(this) = host_object;
-
     this
+}
+
+- (id)initWithContentsOfURL:(id)url // NSURL*
+                    encoding:(NSStringEncoding)encoding
+                       error:(MutPtr<id>)error { // NSError**
+    let data: id = msg_class![env; NSData dataWithContentsOfURL:url];
+    if data == nil {
+        assert!(error.is_null()); // TODO: error handling
+        release(env, this);
+        return nil;
+    }
+    // TODO: error handling for encoding
+    msg![env; this initWithData:data encoding:encoding]
 }
 
 - (bool)isAbsolutePath {
@@ -1940,7 +2018,7 @@ mod ns_string_tests {
 /// In case of small buffer no data is written.
 ///
 /// Right now this helper is used for `NSString getCString:maxLength:encoding:`
-/// method and `CFStringGetPascalString` function.
+/// method, `CFStringGetPascalString` and `CFStringGetBytes` functions.
 pub fn get_bytes_buffer_inner(
     env: &mut Environment,
     str: id, // NSString *
@@ -1986,4 +2064,64 @@ pub fn get_bytes_buffer_inner(
     }
 
     true
+}
+
+/// Helper function used by
+/// `[NSString stringByReplacingOccurrencesOfString:withString:options:range:]`
+/// method.
+fn string_by_replacing_occurrences_inner(
+    env: &mut Environment,
+    source: id,      // NSString *
+    target: id,      // NSString *
+    replacement: id, // NSString *
+    options: NSStringCompareOptions,
+) -> id {
+    // TODO: support foreign subclasses (perhaps via a helper function that
+    // copies the string first)
+    let mut main_iter = env
+        .objc
+        .borrow::<StringHostObject>(source)
+        .iter_code_units();
+    let target_iter = env
+        .objc
+        .borrow::<StringHostObject>(target)
+        .iter_code_units();
+    let replacement_iter = env
+        .objc
+        .borrow::<StringHostObject>(replacement)
+        .iter_code_units();
+
+    // Zero-length target case
+    if target_iter.clone().next().is_none() {
+        let res = msg![env; source copy];
+        return autorelease(env, res);
+    }
+
+    let case_insensitive = match options {
+        0 => false, // No options mean literal match
+        NSCaseInsensitiveSearch => true,
+        _ => unimplemented!(),
+    };
+
+    let mut result: Utf16String = Vec::new();
+    loop {
+        if let Some(new_main_iter) = main_iter.strip_prefix(&target_iter, case_insensitive) {
+            // matched target, replace it
+            result.extend(replacement_iter.clone());
+            main_iter = new_main_iter;
+        } else {
+            // no match, copy as normal
+            match main_iter.next() {
+                Some(cur) => result.push(cur),
+                None => break,
+            }
+        }
+    }
+
+    // TODO: For a foreign subclass of NSString, do we have to return that
+    // subclass? The signature implies this isn't the case and it's probably not
+    // worth the effort, but it's an interesting question.
+    let result_ns_string = msg_class![env; _touchHLE_NSString alloc];
+    *env.objc.borrow_mut(result_ns_string) = StringHostObject::Utf16(result);
+    autorelease(env, result_ns_string)
 }

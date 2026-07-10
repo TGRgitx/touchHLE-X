@@ -14,16 +14,18 @@ use crate::objc;
 pub const DYLIB_LIST: &[&super::HostDylib] = &[
     &libc::DYLIB,
     &objc::DYLIB,
-    &crate::app_picker::DYLIB, // Not a real library; special internal classes.
+    &crate::environment::app_picker::DYLIB, // Not a real library; special internal classes.
     &frameworks::audio_toolbox::DYLIB,
     &frameworks::avfoundation::DYLIB,
     &frameworks::core_animation::DYLIB,
     &frameworks::core_foundation::DYLIB,
     &frameworks::core_graphics::DYLIB,
     &frameworks::core_location::DYLIB,
+    &frameworks::core_motion::DYLIB,
     &frameworks::foundation::DYLIB,
     &frameworks::game_kit::DYLIB,
     &frameworks::media_player::DYLIB,
+    &frameworks::message_ui::DYLIB,
     &frameworks::openal::DYLIB,
     &frameworks::opengles::DYLIB,
     &frameworks::store_kit::DYLIB,

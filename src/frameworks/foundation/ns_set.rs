@@ -42,10 +42,28 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg_class![env; _touchHLE_NSSet allocWithZone:zone]
 }
 
++ (id)set {
+    let set: id = msg![env; this new];
+    autorelease(env, set)
+}
+
++ (id)setWithArray:(id)array { // NSArray *
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithArray:array];
+    autorelease(env, new)
+}
+
 + (id)setWithObject:(id)object {
     assert!(object != nil);
     let new: id = msg![env; this alloc];
     let new: id = msg![env; new initWithObject:object];
+    autorelease(env, new)
+}
+
++ (id)setWithObjects:(id)first_obj, ...args {
+    assert!(this == env.objc.get_known_class("NSSet", &mut env.mem));
+    let new: id = msg![env; this alloc];
+    env.objc.borrow_mut::<SetHostObject>(new).dict = set_from_objects(env, first_obj, args);
     autorelease(env, new)
 }
 
@@ -84,6 +102,19 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg_class![env; _touchHLE_NSMutableSet allocWithZone:zone]
 }
 
++ (id)setWithObjects:(id)first_obj, ...args {
+    assert!(this == env.objc.get_known_class("NSMutableSet", &mut env.mem));
+    let new: id = msg![env; this alloc];
+    env.objc.borrow_mut::<SetHostObject>(new).dict = set_from_objects(env, first_obj, args);
+    autorelease(env, new)
+}
+
++ (id)setWithCapacity:(NSUInteger)capacity {
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithCapacity:capacity];
+    autorelease(env, new)
+}
+
 // NSCopying implementation
 - (id)copyWithZone:(NSZonePtr)_zone {
     todo!(); // TODO: this should produce an immutable copy
@@ -102,12 +133,6 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
 
-+ (id)setWithObjects:(id)first_obj, ...args {
-    let new: id = msg![env; this alloc];
-    env.objc.borrow_mut::<SetHostObject>(new).dict = set_from_objects(env, first_obj, args);
-    autorelease(env, new)
-}
-
 - (id)initWithObject:(id)object {
     let null: id = msg_class![env; NSNull null];
 
@@ -121,6 +146,11 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (id)initWithObjects:(id)first_obj, ...args {
     env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects(env, first_obj, args);
+    this
+}
+
+- (id)initWithArray:(id)array {
+    env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_array(env, array);
     this
 }
 
@@ -184,12 +214,6 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
 
-+ (id)setWithObjects:(id)first_obj, ...args {
-    let new: id = msg![env; this alloc];
-    env.objc.borrow_mut::<SetHostObject>(new).dict = set_from_objects(env, first_obj, args);
-    autorelease(env, new)
-}
-
 - (id)initWithObject:(id)object {
     let null: id = msg_class![env; NSNull null];
 
@@ -204,6 +228,16 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)initWithObjects:(id)first_obj, ...args {
     env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects(env, first_obj, args);
     this
+}
+
+- (id)initWithArray:(id)array {
+    env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_array(env, array);
+    this
+}
+
+- (id)initWithCapacity:(NSUInteger)_capacity {
+    // TODO: capacity
+    msg![env; this init]
 }
 
 - (())dealloc {
@@ -307,6 +341,20 @@ fn set_from_objects(env: &mut Environment, first_obj: id, args: DotDotDot) -> Di
             break;
         }
         dict.insert(env, next_arg, null, /* copy_key: */ false);
+    }
+    dict
+}
+
+/// Helper method shared between `initWithArray:` of `_touchHLE_NSSet` and
+/// `_touchHLE_NSMutableSet`
+fn set_from_array(env: &mut Environment, array: id) -> DictionaryHostObject {
+    let null: id = msg_class![env; NSNull null];
+
+    let mut dict = <DictionaryHostObject as Default>::default();
+    let count: NSUInteger = msg![env; array count];
+    for i in 0..count {
+        let next: id = msg![env; array objectAtIndex:i];
+        dict.insert(env, next, null, /* copy_key: */ false);
     }
     dict
 }
