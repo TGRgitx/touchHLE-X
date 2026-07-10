@@ -2,7 +2,7 @@
 //! Conforming to iOS 3.0+ Foundation specifications.
 
 use crate::mem::Mem;
-use crate::objc::{id, impl_HostObject_with_superclass, nil, Class, TrivialHostObject, ObjC};
+use crate::objc::{id, impl_HostObject_with_superclass, nil, Class, ObjC, TrivialHostObject};
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
 const NS_UNDEFINED: isize = 0x7fffffff;
@@ -96,11 +96,7 @@ make_integer_accessor!(get_weekday_ordinal, set_weekday_ordinal, weekday_ordinal
 // --------------------
 // Registration Function
 // --------------------
-pub fn register_ns_date_components(
-    objc: &mut ObjC,
-    superclass: Class,
-    _mem: &mut Mem,
-) -> Class {
+pub fn register_ns_date_components(objc: &mut ObjC, superclass: Class, _mem: &mut Mem) -> Class {
     let class = objc.register_class("NSDateComponents", superclass);
 
     class.add_class_method("alloc", alloc_components);
