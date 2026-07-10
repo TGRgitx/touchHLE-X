@@ -6,6 +6,7 @@ use crate::objc::{
 };
 use crate::objc::objects::TrivialHostObject;
 use crate::mem::Mem;
+use crate::dyld::ClassExports;
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
 const NS_UNDEFINED: isize = 0x7fffffff;
@@ -95,12 +96,7 @@ make_integer_accessor!(get_weekday_ordinal, set_weekday_ordinal, weekday_ordinal
 // --------------------
 // Registration
 // --------------------
-pub fn register_ns_date_components(
-    objc: &mut ObjC,
-    superclass: Class,
-) -> Class {
-    let class = objc.register_class("NSDateComponents", superclass);
-
+fn register(objc: &mut ObjC, class: Class) -> Class {
     class.add_class_method("alloc", alloc_components);
     class.add_method("init", init_components);
 
@@ -135,3 +131,8 @@ pub fn register_ns_date_components(
     class
 }
 
+pub const CLASSES: ClassExports = &[crate::dyld::ClassExport {
+    name: "NSDateComponents",
+    superclass_name: "NSObject",
+    init_fn: Some(register),
+}];
