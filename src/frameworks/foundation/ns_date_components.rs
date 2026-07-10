@@ -1,11 +1,11 @@
 //! Exact impl of NSDateComponents.
 // Conforming to iOS 3.0+ Foundation specifications.
 
-use crate::Environment;
 use crate::objc::{
     id, impl_HostObject_with_superclass, nil, objc_method, ClassExports, ClassTemplate, Sel,
     TrivialHostObject,
 };
+use crate::Environment;
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
 const NS_UNDEFINED: i32 = 0x7fffffff;
@@ -59,15 +59,21 @@ fn get_calendar(env: &mut Environment, this: id, _sel: Sel) -> id {
 }
 
 fn set_calendar(env: &mut Environment, this: id, _sel: Sel, val: id) {
-    env.objc.borrow_mut::<NSDateComponentsHostObject>(this).calendar = val;
+    env.objc
+        .borrow_mut::<NSDateComponentsHostObject>(this)
+        .calendar = val;
 }
 
 fn get_time_zone(env: &mut Environment, this: id, _sel: Sel) -> id {
-    env.objc.borrow::<NSDateComponentsHostObject>(this).time_zone
+    env.objc
+        .borrow::<NSDateComponentsHostObject>(this)
+        .time_zone
 }
 
 fn set_time_zone(env: &mut Environment, this: id, _sel: Sel, val: id) {
-    env.objc.borrow_mut::<NSDateComponentsHostObject>(this).time_zone = val;
+    env.objc
+        .borrow_mut::<NSDateComponentsHostObject>(this)
+        .time_zone = val;
 }
 
 // --------------------
@@ -79,7 +85,9 @@ macro_rules! make_integer_accessor {
             env.objc.borrow::<NSDateComponentsHostObject>(this).$field
         }
         fn $set_name(env: &mut Environment, this: id, _sel: Sel, val: i32) {
-            env.objc.borrow_mut::<NSDateComponentsHostObject>(this).$field = val;
+            env.objc
+                .borrow_mut::<NSDateComponentsHostObject>(this)
+                .$field = val;
         }
     };
 }
@@ -96,38 +104,39 @@ make_integer_accessor!(get_weekday, set_weekday, weekday);
 make_integer_accessor!(get_weekday_ordinal, set_weekday_ordinal, weekday_ordinal);
 
 // --------------------
-// Registration
+// Registration Export for touchHLE
 // --------------------
-pub const CLASSES: ClassExports = &[("NSDateComponents", ClassTemplate {
-    superclass_name: "NSObject",
-    instance_methods: &[
-        ("init", objc_method!(init)),
-        ("calendar", objc_method!(get_calendar)),
-        ("setCalendar:", objc_method!(set_calendar)),
-        ("timeZone", objc_method!(get_time_zone)),
-        ("setTimeZone:", objc_method!(set_time_zone)),
-        ("era", objc_method!(get_era)),
-        ("setEra:", objc_method!(set_era)),
-        ("year", objc_method!(get_year)),
-        ("setYear:", objc_method!(set_year)),
-        ("month", objc_method!(get_month)),
-        ("setMonth:", objc_method!(set_month)),
-        ("day", objc_method!(get_day)),
-        ("setDay:", objc_method!(set_day)),
-        ("hour", objc_method!(get_hour)),
-        ("setHour:", objc_method!(set_hour)),
-        ("minute", objc_method!(get_minute)),
-        ("setMinute:", objc_method!(set_minute)),
-        ("second", objc_method!(get_second)),
-        ("setSecond:", objc_method!(set_second)),
-        ("week", objc_method!(get_week)),
-        ("setWeek:", objc_method!(set_week)),
-        ("weekday", objc_method!(get_weekday)),
-        ("setWeekday:", objc_method!(set_weekday)),
-        ("weekdayOrdinal", objc_method!(get_weekday_ordinal)),
-        ("setWeekdayOrdinal:", objc_method!(set_weekday_ordinal)),
-    ],
-    class_methods: &[
-        ("alloc", objc_method!(alloc)),
-    ],
-})];
+pub const CLASSES: ClassExports = &[(
+    "NSDateComponents",
+    ClassTemplate {
+        superclass_name: "NSObject",
+        instance_methods: &[
+            ("init", objc_method!(init)),
+            ("calendar", objc_method!(get_calendar)),
+            ("setCalendar:", objc_method!(set_calendar)),
+            ("timeZone", objc_method!(get_time_zone)),
+            ("setTimeZone:", objc_method!(set_time_zone)),
+            ("era", objc_method!(get_era)),
+            ("setEra:", objc_method!(set_era)),
+            ("year", objc_method!(get_year)),
+            ("setYear:", objc_method!(set_year)),
+            ("month", objc_method!(get_month)),
+            ("setMonth:", objc_method!(set_month)),
+            ("day", objc_method!(get_day)),
+            ("setDay:", objc_method!(set_day)),
+            ("hour", objc_method!(get_hour)),
+            ("setHour:", objc_method!(set_hour)),
+            ("minute", objc_method!(get_minute)),
+            ("setMinute:", objc_method!(set_minute)),
+            ("second", objc_method!(get_second)),
+            ("setSecond:", objc_method!(set_second)),
+            ("week", objc_method!(get_week)),
+            ("setWeek:", objc_method!(set_week)),
+            ("weekday", objc_method!(get_weekday)),
+            ("setWeekday:", objc_method!(set_weekday)),
+            ("weekdayOrdinal", objc_method!(get_weekday_ordinal)),
+            ("setWeekdayOrdinal:", objc_method!(set_weekday_ordinal)),
+        ],
+        class_methods: &[("alloc", objc_method!(alloc))],
+    },
+)];
