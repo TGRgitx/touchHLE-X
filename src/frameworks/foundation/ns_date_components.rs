@@ -1,7 +1,7 @@
 //! Exact impl of NSDateComponents.
 //! Conforming to iOS 3.0+ Foundation specifications.
 
-use crate::objc::{ClassExports, id, impl_HostObject_with_superclass, nil, SEL, TrivialHostObject};
+use crate::objc::{id, impl_HostObject_with_superclass, nil, ClassExports, TrivialHostObject, SEL};
 use crate::Environment;
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
@@ -52,7 +52,9 @@ fn init(_env: &mut Environment, this: id, _sel: SEL) -> id {
 // Getters & Setters for Objects
 // --------------------
 fn calendar(env: &mut Environment, this: id, _sel: SEL) -> id {
-    env.objc.borrow::<NSDateComponentsHostObject>(this).calendar
+    env.objc
+        .borrow::<NSDateComponentsHostObject>(this)
+        .calendar
 }
 
 fn setCalendar_(env: &mut Environment, this: id, _sel: SEL, val: id) {
@@ -62,7 +64,9 @@ fn setCalendar_(env: &mut Environment, this: id, _sel: SEL, val: id) {
 }
 
 fn timeZone(env: &mut Environment, this: id, _sel: SEL) -> id {
-    env.objc.borrow::<NSDateComponentsHostObject>(this).time_zone
+    env.objc
+        .borrow::<NSDateComponentsHostObject>(this)
+        .time_zone
 }
 
 fn setTimeZone_(env: &mut Environment, this: id, _sel: SEL, val: id) {
