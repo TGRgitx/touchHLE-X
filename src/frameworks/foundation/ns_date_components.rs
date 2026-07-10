@@ -4,9 +4,7 @@
 use crate::dyld::ClassExports;
 use crate::mem::Mem;
 use crate::objc::objects::TrivialHostObject;
-use crate::objc::{
-    id, impl_HostObject_with_superclass, nil, Class, HostObject, ObjC,
-};
+use crate::objc::{id, impl_HostObject_with_superclass, nil, Class, HostObject, ObjC};
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
 const NS_UNDEFINED: isize = 0x7fffffff;
@@ -92,11 +90,7 @@ make_integer_accessor!(get_minute, set_minute, minute);
 make_integer_accessor!(get_second, set_second, second);
 make_integer_accessor!(get_week, set_week, week);
 make_integer_accessor!(get_weekday, set_weekday, weekday);
-make_integer_accessor!(
-    get_weekday_ordinal,
-    set_weekday_ordinal,
-    weekday_ordinal
-);
+make_integer_accessor!(get_weekday_ordinal, set_weekday_ordinal, weekday_ordinal);
 
 // --------------------
 // Registration Export for touchHLE
@@ -141,3 +135,4 @@ pub const CLASSES: ClassExports = &[crate::dyld::ClassExport {
     superclass_name: "NSObject",
     init_fn: Some(register),
 }];
+
