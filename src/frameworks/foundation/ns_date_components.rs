@@ -56,15 +56,21 @@ fn calendar(env: &mut Environment, this: id, _sel: SEL) -> id {
 }
 
 fn setCalendar_(env: &mut Environment, this: id, _sel: SEL, val: id) {
-    env.objc.borrow_mut::<NSDateComponentsHostObject>(this).calendar = val;
+    env.objc
+        .borrow_mut::<NSDateComponentsHostObject>(this)
+        .calendar = val;
 }
 
 fn timeZone(env: &mut Environment, this: id, _sel: SEL) -> id {
-    env.objc.borrow::<NSDateComponentsHostObject>(this).time_zone
+    env.objc
+        .borrow::<NSDateComponentsHostObject>(this)
+        .time_zone
 }
 
 fn setTimeZone_(env: &mut Environment, this: id, _sel: SEL, val: id) {
-    env.objc.borrow_mut::<NSDateComponentsHostObject>(this).time_zone = val;
+    env.objc
+        .borrow_mut::<NSDateComponentsHostObject>(this)
+        .time_zone = val;
 }
 
 // --------------------
@@ -76,7 +82,9 @@ macro_rules! make_integer_accessor {
             env.objc.borrow::<NSDateComponentsHostObject>(this).$field
         }
         fn $set_name(env: &mut Environment, this: id, _sel: SEL, val: i32) {
-            env.objc.borrow_mut::<NSDateComponentsHostObject>(this).$field = val;
+            env.objc
+                .borrow_mut::<NSDateComponentsHostObject>(this)
+                .$field = val;
         }
     };
 }
