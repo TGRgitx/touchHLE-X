@@ -2,6 +2,7 @@
 //! Conforming to iOS 3.0+ Foundation specifications.
 
 use crate::objc::{id, impl_HostObject_with_superclass, nil, ClassExports, TrivialHostObject, SEL};
+use crate::objc_classes;
 use crate::Environment;
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
@@ -133,3 +134,4 @@ pub const CLASSES: ClassExports = objc_classes! {
         - setWeekdayOrdinal_
     }
 };
+        
