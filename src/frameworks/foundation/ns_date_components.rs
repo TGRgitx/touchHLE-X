@@ -1,13 +1,15 @@
 //! Exact impl of NSDateComponents.
 //! Conforming to iOS 3.0+ Foundation specifications.
 
-use crate::objc::{id, impl_HostObject_with_superclass, nil, ClassExports, TrivialHostObject, SEL};
-use crate::objc_classes;
-use crate::Environment;
+use crate::mem::Mem;
+use crate::objc::{id, impl_HostObject_with_superclass, nil, Class, ObjC, TrivialHostObject};
 
 /// Apple uses NSIntegerMax (0x7fffffff on 32-bit) for undefined components
 const NS_UNDEFINED: i32 = 0x7fffffff;
 
+// --------------------
+// 1. HostObject
+// --------------------
 pub struct NSDateComponentsHostObject {
     pub superclass: TrivialHostObject,
     pub calendar: id,
@@ -26,7 +28,10 @@ pub struct NSDateComponentsHostObject {
 
 impl_HostObject_with_superclass!(NSDateComponentsHostObject);
 
-fn alloc(env: &mut Environment, this: id, _sel: SEL) -> id {
+// --------------------
+// 2. alloc / init
+// --------------------
+fn alloc(objc: &mut ObjC, this: Class, mem: &mut Mem) -> id {
     let host = NSDateComponentsHostObject {
         superclass: TrivialHostObject,
         calendar: nil,
@@ -42,97 +47,91 @@ fn alloc(env: &mut Environment, this: id, _sel: SEL) -> id {
         weekday: NS_UNDEFINED,
         weekday_ordinal: NS_UNDEFINED,
     };
-    env.objc.alloc_object(this, Box::new(host), &mut env.mem)
+    objc.alloc_object(this, Box::new(host), mem)
 }
 
-fn init(_env: &mut Environment, this: id, _sel: SEL) -> id {
+fn init(_objc: &mut ObjC, this: id, _mem: &mut Mem) -> id {
     this
 }
 
 // --------------------
-// Getters & Setters for Objects
+// 3. Getters & Setters for Objects
 // --------------------
-fn calendar(env: &mut Environment, this: id, _sel: SEL) -> id {
-    env.objc.borrow::<NSDateComponentsHostObject>(this).calendar
+fn calendar(objc: &mut ObjC, this: id, _mem: &mut Mem) -> id {
+    objc.borrow::<NSDateComponentsHostObject>(this).calendar
 }
 
-fn setCalendar_(env: &mut Environment, this: id, _sel: SEL, val: id) {
-    env.objc
-        .borrow_mut::<NSDateComponentsHostObject>(this)
-        .calendar = val;
+fn set_calendar(objc: &mut ObjC, this: id, val: id, _mem: &mut Mem) {
+    objc.borrow_mut::<NSDateComponentsHostObject>(this).calendar = val;
 }
 
-fn timeZone(env: &mut Environment, this: id, _sel: SEL) -> id {
-    env.objc
-        .borrow::<NSDateComponentsHostObject>(this)
-        .time_zone
+fn time_zone(objc: &mut ObjC, this: id, _mem: &mut Mem) -> id {
+    objc.borrow::<NSDateComponentsHostObject>(this).time_zone
 }
 
-fn setTimeZone_(env: &mut Environment, this: id, _sel: SEL, val: id) {
-    env.objc
-        .borrow_mut::<NSDateComponentsHostObject>(this)
-        .time_zone = val;
+fn set_time_zone(objc: &mut ObjC, this: id, val: id, _mem: &mut Mem) {
+    objc.borrow_mut::<NSDateComponentsHostObject>(this).time_zone = val;
 }
 
 // --------------------
-// Macro for Integer Properties
+// 4. Macro for Integer Properties
 // --------------------
 macro_rules! make_integer_accessor {
     ($get_name:ident, $set_name:ident, $field:ident) => {
-        fn $get_name(env: &mut Environment, this: id, _sel: SEL) -> i32 {
-            env.objc.borrow::<NSDateComponentsHostObject>(this).$field
+        fn $get_name(objc: &mut ObjC, this: id, _mem: &mut Mem) -> i32 {
+            objc.borrow::<NSDateComponentsHostObject>(this).$field
         }
-        fn $set_name(env: &mut Environment, this: id, _sel: SEL, val: i32) {
-            env.objc
-                .borrow_mut::<NSDateComponentsHostObject>(this)
-                .$field = val;
+        fn $set_name(objc: &mut ObjC, this: id, val: i32, _mem: &mut Mem) {
+            objc.borrow_mut::<NSDateComponentsHostObject>(this).$field = val;
         }
     };
 }
 
-make_integer_accessor!(era, setEra_, era);
-make_integer_accessor!(year, setYear_, year);
-make_integer_accessor!(month, setMonth_, month);
-make_integer_accessor!(day, setDay_, day);
-make_integer_accessor!(hour, setHour_, hour);
-make_integer_accessor!(minute, setMinute_, minute);
-make_integer_accessor!(second, setSecond_, second);
-make_integer_accessor!(week, setWeek_, week);
-make_integer_accessor!(weekday, setWeekday_, weekday);
-make_integer_accessor!(weekdayOrdinal, setWeekdayOrdinal_, weekday_ordinal);
+make_integer_accessor!(era, set_era, era);
+make_integer_accessor!(year, set_year, year);
+make_integer_accessor!(month, set_month, month);
+make_integer_accessor!(day, set_day, day);
+make_integer_accessor!(hour, set_hour, hour);
+make_integer_accessor!(minute, set_minute, minute);
+make_integer_accessor!(second, set_second, second);
+make_integer_accessor!(week, set_week, week);
+make_integer_accessor!(weekday, set_weekday, weekday);
+make_integer_accessor!(weekday_ordinal, set_weekday_ordinal, weekday_ordinal);
 
 // --------------------
-// Registration Export
+// 5. Registering the class and its methods
 // --------------------
-pub const CLASSES: ClassExports = objc_classes! {
-    (env, this, _cmd);
+pub fn register_ns_date_components(objc: &mut ObjC, superclass: Class, mem: &mut Mem) -> Class {
+    let class = objc.register_class("NSDateComponents", superclass);
 
-    class NSDateComponents: NSObject {
-        + alloc
-        - init
-        - calendar
-        - setCalendar_
-        - timeZone
-        - setTimeZone_
-        - era
-        - setEra_
-        - year
-        - setYear_
-        - month
-        - setMonth_
-        - day
-        - setDay_
-        - hour
-        - setHour_
-        - minute
-        - setMinute_
-        - second
-        - setSecond_
-        - week
-        - setWeek_
-        - weekday
-        - setWeekday_
-        - weekdayOrdinal
-        - setWeekdayOrdinal_
-    }
-};
+    class.add_class_method("alloc", alloc);
+    class.add_method("init", init);
+
+    class.add_method("calendar", calendar);
+    class.add_method("setCalendar:", set_calendar);
+    class.add_method("timeZone", time_zone);
+    class.add_method("setTimeZone:", set_time_zone);
+
+    class.add_method("era", era);
+    class.add_method("setEra:", set_era);
+    class.add_method("year", year);
+    class.add_method("setYear:", set_year);
+    class.add_method("month", month);
+    class.add_method("setMonth:", set_month);
+    class.add_method("day", day);
+    class.add_method("setDay:", set_day);
+    class.add_method("hour", hour);
+    class.add_method("setHour:", set_hour);
+    class.add_method("minute", minute);
+    class.add_method("setMinute:", set_minute);
+    class.add_method("second", second);
+    class.add_method("setSecond:", set_second);
+    class.add_method("week", week);
+    class.add_method("setWeek:", set_week);
+    class.add_method("weekday", weekday);
+    class.add_method("setWeekday:", set_weekday);
+    class.add_method("weekdayOrdinal", weekday_ordinal);
+    class.add_method("setWeekdayOrdinal:", set_weekday_ordinal);
+
+    class
+}
