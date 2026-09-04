@@ -105,6 +105,8 @@ make_integer_accessor!(weekdayOrdinal, setWeekdayOrdinal_, weekday_ordinal);
 // Registration Export
 // --------------------
 pub const CLASSES: ClassExports = objc_classes! {
+    (env, this, _cmd);
+
     class NSDateComponents: NSObject {
         + alloc
         - init
