@@ -70,7 +70,8 @@ fn time_zone(objc: &mut ObjC, this: id, _mem: &mut Mem) -> id {
 }
 
 fn set_time_zone(objc: &mut ObjC, this: id, val: id, _mem: &mut Mem) {
-    objc.borrow_mut::<NSDateComponentsHostObject>(this).time_zone = val;
+    objc.borrow_mut::<NSDateComponentsHostObject>(this)
+        .time_zone = val;
 }
 
 // --------------------
