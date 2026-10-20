@@ -315,4 +315,4 @@ fn skip_characters(env: &mut Environment, scanner: id) {
         }
     }
     env.objc.borrow_mut::<NSScannerHostObject>(scanner).pos = pos;
-              }
+    }
