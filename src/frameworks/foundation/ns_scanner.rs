@@ -171,7 +171,7 @@ pub const CLASSES: ClassExports = objc_classes! {
         Some(rest) if rest.chars().next().is_some_and(|c| c.is_ascii_hexdigit()) => {
             (2, rest)
         }
-        _ => (0, tmp.as_str()),
+        _ => (0, &*tmp),
     };
 
     let mut value: u32 = 0;
@@ -315,4 +315,4 @@ fn skip_characters(env: &mut Environment, scanner: id) {
         }
     }
     env.objc.borrow_mut::<NSScannerHostObject>(scanner).pos = pos;
-}
+              }
