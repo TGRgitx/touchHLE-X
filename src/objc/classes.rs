@@ -14,9 +14,11 @@ use super::{
     id, ivar_list_t, method_list_t, nil, objc_object, AnyHostObject, HostIMP, HostObject, ObjC,
     IMP, SEL,
 };
+use crate::libc::string::strdup;
 use crate::mach_o::MachO;
 use crate::mem::{guest_size_of, ConstPtr, ConstVoidPtr, GuestUSize, Mem, MutPtr, Ptr, SafeRead};
 use crate::Environment;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 
 /// Generic pointer to an Objective-C class or metaclass.
@@ -459,10 +461,11 @@ fn substitute_classes(
     // don't support yet. This isn't "ad blocking" because ads no longer work
     // on real devices anyway :)
     if !(name.starts_with("AdMob")
+        || name.starts_with("AdWhirl")
         || name.starts_with("AltAds")
-        || name.starts_with("Mobclix")
         || name.starts_with("FB") // Facebook
         || name.starts_with("Flurry")
+        || name.starts_with("Mobclix")
         || name.starts_with("OpenFeint")
         || name.starts_with("Tapjoy"))
     {
@@ -1050,4 +1053,66 @@ pub(super) fn class_getProperty(
         return Ptr::null();
     }
     todo!()
+}
+
+pub(super) fn class_replaceMethod(
+    env: &mut Environment,
+    cls: Class,
+    name: SEL,
+    imp: IMP,
+    types: ConstPtr<u8>,
+) -> IMP {
+    // TODO: avoid unnecessary copy of types
+    let types_copy = strdup(env, types).cast_const();
+    let &mut ClassHostObject {
+        ref mut methods,
+        ref mut guest_method_signatures,
+        ..
+    } = env.objc.borrow_mut(cls);
+    if let Entry::Vacant(e) = methods.entry(name) {
+        // TODO: use `class_addMethod` once implemented
+        log_dbg!(
+            "class_replaceMethod: adding new implementation {:?} for method {}",
+            imp,
+            name.as_str(&env.mem)
+        );
+        e.insert(imp);
+        guest_method_signatures.insert(name, types_copy);
+        return IMP::guest_null();
+    }
+    env.mem.free(types_copy.cast().cast_mut());
+    // TODO: use `method_setImplementation` once implemented
+    // Note: encoding types are ignored
+    let existing = methods.insert(name, imp.clone()).unwrap();
+    assert!(matches!(existing, IMP::Guest(_))); // TODO
+    log_dbg!(
+        "class_replaceMethod: existing {:?} replaced with {:?} for method {}",
+        existing,
+        imp,
+        name.as_str(&env.mem)
+    );
+    existing
+}
+
+pub(super) fn class_getMethodImplementation(env: &mut Environment, cls: Class, name: SEL) -> IMP {
+    if cls == nil {
+        return IMP::guest_null();
+    }
+    let mut class = cls;
+    loop {
+        let &ClassHostObject {
+            superclass: next,
+            ref methods,
+            ..
+        } = env.objc.borrow(class);
+        if methods.contains_key(&name) {
+            let method = methods.get(&name).unwrap().clone();
+            assert!(matches!(method, IMP::Guest(_))); // TODO
+            return method;
+        } else if next == nil {
+            // TODO: currently this returns NULL for unimplemented host methods
+            return IMP::guest_null();
+        }
+        class = next;
+    }
 }

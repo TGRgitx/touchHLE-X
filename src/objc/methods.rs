@@ -28,6 +28,51 @@ pub enum IMP {
     Host(&'static dyn HostIMP),
     Guest(GuestIMP),
 }
+impl Clone for IMP {
+    fn clone(&self) -> Self {
+        match self {
+            IMP::Guest(guest_imp) => IMP::Guest(*guest_imp),
+            IMP::Host(_) => unimplemented!(),
+        }
+    }
+}
+impl std::fmt::Debug for IMP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IMP::Guest(guest_imp) => write!(f, "guest method IMP at {:?}", guest_imp),
+            IMP::Host(_) => unimplemented!(),
+        }
+    }
+}
+impl IMP {
+    pub fn guest_null() -> IMP {
+        IMP::Guest(GuestIMP::from_addr_with_thumb_bit(0))
+    }
+}
+
+impl GuestArg for IMP {
+    const REG_COUNT: usize = <GuestFunction as GuestArg>::REG_COUNT;
+    fn from_regs(regs: &[u32]) -> Self {
+        IMP::Guest(<GuestFunction as GuestArg>::from_regs(regs))
+    }
+    fn to_regs(self, regs: &mut [u32]) {
+        match self {
+            IMP::Guest(guest_imp) => guest_imp.to_regs(regs),
+            IMP::Host(_) => unimplemented!(),
+        }
+    }
+}
+impl GuestRet for IMP {
+    fn from_regs(regs: &[u32]) -> Self {
+        IMP::Guest(<GuestFunction as GuestArg>::from_regs(regs))
+    }
+    fn to_regs(self, regs: &mut [u32]) {
+        match self {
+            IMP::Guest(guest_imp) => guest_imp.to_regs(regs),
+            IMP::Host(_) => unimplemented!(),
+        }
+    }
+}
 
 /// Type for any host function implementing a method (see also [IMP]).
 pub trait HostIMP: CallFromGuest {

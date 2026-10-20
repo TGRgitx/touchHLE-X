@@ -28,8 +28,8 @@ const ALL_SPECIFIERS: [u8; 25] = [
     b'@', b'D', b'U', b'O',
 ];
 
-const INTEGER_SPECIFIERS: [u8; 6] = [b'd', b'i', b'o', b'u', b'x', b'X'];
-const FLOAT_SPECIFIERS: [u8; 3] = [b'f', b'e', b'g'];
+const INTEGER_SPECIFIERS: [u8; 6] = *b"diouxX";
+const FLOAT_SPECIFIERS: [u8; 3] = *b"feg";
 
 /// String formatting implementation for `printf` and `NSLog` function families.
 ///
@@ -903,7 +903,7 @@ where
         let specifier = env.mem.read(format + format_char_idx);
         format_char_idx += 1;
 
-        if ![b'[', b'c', b'n'].contains(&specifier) {
+        if !b"[cn".contains(&specifier) {
             // skip whitespaces
             let x = getc_fn(env, subject, src_char_idx);
             if x.is_err() {
@@ -1032,6 +1032,10 @@ where
                             None => {
                                 let c_u32_ptr: ConstPtr<u32> = args.next(env);
                                 env.mem.write(c_u32_ptr.cast_mut(), val as u32);
+                            }
+                            Some("ll") => {
+                                let c_u64_ptr: ConstPtr<u64> = args.next(env);
+                                env.mem.write(c_u64_ptr.cast_mut(), val);
                             }
                             _ => unimplemented!("length_modifier {:?}", length_modifier),
                         }
