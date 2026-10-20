@@ -156,17 +156,45 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (bool)scanHexInt:(MutPtr<u32>)result {
-    assert!(!result.is_null());
     skip_characters(env, this);
 
-    let NSScannerHostObject { to_be_skipped: _set, string, len, pos } = env.objc.borrow::<NSScannerHostObject>(this).clone();
-    assert!(pos < len);
-    let susbstring: id = msg![env; string substringFromIndex:pos];
-    let tmp = to_rust_string(env, susbstring);
-    assert!(!tmp.starts_with("0x") && !tmp.starts_with("0X"));
-    assert!(!tmp.chars().next().unwrap().is_ascii_hexdigit()); // TODO
-    env.mem.write(result, 0);
-    false
+    let &NSScannerHostObject { string, len, pos, .. } = env.objc.borrow(this);
+    if pos >= len {
+        // Nothing to scan (same as simulator)
+        return false;
+    }
+    let substring: id = msg![env; string substringFromIndex:pos];
+    let tmp = to_rust_string(env, substring);
+
+    // An optional "0x"/"0X" prefix is allowed.
+    let (prefix_len, digits) = match tmp.strip_prefix("0x").or_else(|| tmp.strip_prefix("0X")) {
+        Some(rest) if rest.chars().next().is_some_and(|c| c.is_ascii_hexdigit()) => {
+            (2, rest)
+        }
+        _ => (0, tmp.as_str()),
+    };
+
+    let mut value: u32 = 0;
+    let mut digit_count: usize = 0;
+    for c in digits.chars() {
+        let Some(d) = c.to_digit(16) else {
+            break;
+        };
+        // Overflow saturates at UINT_MAX, like Apple's implementation.
+        value = value.saturating_mul(16).saturating_add(d);
+        digit_count += 1;
+    }
+    if digit_count == 0 {
+        return false;
+    }
+
+    if !result.is_null() {
+        env.mem.write(result, value);
+    }
+    // All consumed characters are ASCII, so byte count == UTF-16 unit count.
+    let new_pos = pos + (prefix_len + digit_count) as NSUInteger;
+    env.objc.borrow_mut::<NSScannerHostObject>(this).pos = new_pos;
+    true
 }
 
 - (bool)scanUpToString:(id)stop_string // NSString *
