@@ -5,7 +5,7 @@
  */
 //! The `NSScanner` class.
 
-use crate::frameworks::foundation::ns_string::{from_u16_vec, to_rust_string};
+use crate::frameworks::foundation::ns_string::{self, from_u16_vec, to_rust_string};
 use crate::frameworks::foundation::{unichar, NSNotFound, NSRange, NSUInteger};
 use crate::mem::MutPtr;
 use crate::objc::{
@@ -59,7 +59,14 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)initWithString:(id)string { // NSString *
-    assert!(string != nil);
+    // Real iOS doesn't crash on a nil string (some apps pass one, e.g. when
+    // something upstream returned nil): the scanner just finds nothing.
+    let string = if string == nil {
+        log!("Warning: [NSScanner initWithString:nil], using an empty string");
+        ns_string::get_static_str(env, "")
+    } else {
+        string
+    };
     let string: id = msg![env; string copy]; // Same behaviour as simulator
     let len: NSUInteger = msg![env; string length];
     let default_set = msg_class![env; NSCharacterSet whitespaceAndNewlineCharacterSet];
