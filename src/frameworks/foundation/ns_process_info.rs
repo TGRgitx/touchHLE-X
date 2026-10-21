@@ -64,6 +64,13 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; main_bundle objectForInfoDictionaryKey:name_key]
 }
 
+// NSString. Matches the format of the real thing, e.g.
+// "Version 4.0.1 (Build 8A306)".
+- (id)operatingSystemVersionString {
+    assert_process_info_singleton(env, this); // TODO
+    ns_string::get_static_str(env, "Version 4.0.1 (Build 8A306)")
+}
+
 @end
 
 };
