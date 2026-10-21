@@ -491,7 +491,9 @@ mod tests {
 
     #[test]
     fn civil_round_trip() {
-        for days in [-1_000_000, -719_468, -1, 0, 1, 10_957, 11_016, 20_000, 1_000_000] {
+        for days in [
+            -1_000_000, -719_468, -1, 0, 1, 10_957, 11_016, 20_000, 1_000_000,
+        ] {
             let (y, m, d) = civil_from_days(days);
             assert_eq!(days_from_civil(y, m, d), days);
         }
