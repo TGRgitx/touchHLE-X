@@ -1393,6 +1393,22 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (id)initWithBytesNoCopy:(MutPtr<u8>)bytes
+                   length:(NSUInteger)len
+                 encoding:(NSStringEncoding)encoding
+             freeWhenDone:(bool)free_when_done {
+    // We always copy the bytes (our strings own their data), so "no copy"
+    // is only an optimization hint we can ignore. The buffer is still
+    // the string's to free if freeWhenDone is set.
+    let new: id = msg![env; this initWithBytes:(bytes.cast_const())
+                                        length:len
+                                      encoding:encoding];
+    if free_when_done && !bytes.is_null() {
+        env.mem.free(bytes.cast());
+    }
+    new
+}
+
 - (id)initWithCharacters:(ConstPtr<unichar>)characters length:(NSUInteger)len {
     assert!(!characters.is_null());
     let num_bytes = len * 2;
