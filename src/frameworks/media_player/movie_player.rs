@@ -8,6 +8,7 @@
 use crate::dyld::{ConstantExports, HostConstant};
 use crate::frameworks::foundation::{ns_string, ns_url, NSInteger, NSTimeInterval};
 use crate::frameworks::uikit::ui_device::UIDeviceOrientation;
+use crate::mem::{MutPtr, Ptr};
 use crate::objc::{
     id, msg, msg_class, nil, objc_classes, release, retain, todo_objc_setter, ClassExports,
     HostObject, NSZonePtr,
@@ -74,6 +75,9 @@ pub const CONSTANTS: ConstantExports = &[
 struct MPMoviePlayerControllerHostObject {
     // NSURL *
     content_url: id,
+    /// `AVAudioPlayer*` playing the movie's audio track, or nil. There is no
+    /// video decoder yet, so only the sound is played.
+    audio_player: id,
 }
 impl HostObject for MPMoviePlayerControllerHostObject {}
 
@@ -88,6 +92,7 @@ pub const CLASSES: ClassExports = objc_classes! {
 + (id)allocWithZone:(NSZonePtr)_zone {
     let host_object = Box::new(MPMoviePlayerControllerHostObject {
         content_url: nil,
+        audio_player: nil,
     });
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
@@ -104,6 +109,8 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(this).content_url = url;
 
     // Act as if loading immediately completed (Spore Origins waits for this).
+    // The player is retained until the notification has been posted.
+    retain(env, this);
     State::get(env).pending_notifications.push_back(
         (MPMoviePlayerContentPreloadDidFinishNotification, this, Instant::now())
     );
@@ -112,8 +119,9 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (())dealloc {
-    let url = env.objc.borrow::<MPMoviePlayerControllerHostObject>(this).content_url;
-    release(env, url);
+    let &MPMoviePlayerControllerHostObject { content_url, audio_player } = env.objc.borrow(this);
+    release(env, audio_player); // stops playback
+    release(env, content_url);
 
     env.objc.dealloc_object(this, &mut env.mem);
 }
@@ -168,17 +176,28 @@ pub const CLASSES: ClassExports = objc_classes! {
 // MPMediaPlayback implementation
 - (())play {
     log!("TODO: [(MPMoviePlayerController*){:?} play]", this);
-    if let Some(old) = env.framework_state.media_player.movie_player.active_player {
-        let _: () = msg![env; old stop];
+    // Some apps (e.g. NOVA2) call `play` twice on the same player, which
+    // shouldn't restart or stop anything.
+    let already_active = env.framework_state.media_player.movie_player.active_player == Some(this);
+    if !already_active {
+        if let Some(old) = env.framework_state.media_player.movie_player.active_player {
+            let _: () = msg![env; old stop];
+        }
+        assert!(env.framework_state.media_player.movie_player.active_player.is_none());
+        // Movie player is retained by the runtime until it is stopped
+        retain(env, this);
+        env.framework_state.media_player.movie_player.active_player = Some(this);
     }
-    assert!(env.framework_state.media_player.movie_player.active_player.is_none());
-    // Movie player is retained by the runtime until it is stopped
-    retain(env, this);
-    env.framework_state.media_player.movie_player.active_player = Some(this);
 
-    // Act as if playback immediately completed after 1 second
+    // There is no video decoding yet, but we can play the audio track and use
+    // its length as the length of the movie. If the audio can't be played,
+    // act as if playback immediately completed after 1 second
     // (various apps wait for this, such as BIA and Hero of Sparta).
-    let notif = (MPMoviePlayerPlaybackDidFinishNotification, this, Instant::now().checked_add(Duration::from_millis(1000)).unwrap());
+    let delay = match start_audio(env, this) {
+        Some(seconds) => Duration::from_secs_f64(seconds),
+        None => Duration::from_millis(1000),
+    };
+    let notif = (MPMoviePlayerPlaybackDidFinishNotification, this, Instant::now().checked_add(delay).unwrap());
     for (name, obj, _) in &mut State::get(env).pending_notifications {
         // De-duplicate similar notifications. This can happen if app is calling
         // `play` twice on the same player object (case of NOVA2).
@@ -186,6 +205,8 @@ pub const CLASSES: ClassExports = objc_classes! {
             return;
         }
     }
+    // The player is retained until the notification has been posted.
+    retain(env, this);
     State::get(env).pending_notifications.push_back(notif);
 }
 
@@ -195,11 +216,29 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (())stop {
     log!("TODO: [(MPMoviePlayerController*){:?} stop]", this);
-    if env.framework_state.media_player.movie_player.active_player.is_some() {
-        // Some applications (like NOVA2) may send 2 `stop` messages for each
-        // 1 `play` message for the player. In that case, we want to release
-        // the active player only once.
-        assert!(this == env.framework_state.media_player.movie_player.active_player.take().unwrap());
+
+    // Stop the audio.
+    let audio_player = env.objc.borrow::<MPMoviePlayerControllerHostObject>(this).audio_player;
+    if audio_player != nil {
+        env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(this).audio_player = nil;
+        release(env, audio_player); // stops playback
+    }
+
+    // The movie is over now, so if the "playback finished" notification is
+    // still waiting for the movie's end, send it right away rather than
+    // (much) later.
+    for (name, obj, time) in &mut State::get(env).pending_notifications {
+        if *name == MPMoviePlayerPlaybackDidFinishNotification && *obj == this {
+            *time = Instant::now();
+        }
+    }
+
+    // Some applications (like NOVA2) may send 2 `stop` messages for each
+    // 1 `play` message for the player, and an app may also stop a player that
+    // is no longer the active one. We only want to release the active player
+    // once.
+    if env.framework_state.media_player.movie_player.active_player == Some(this) {
+        env.framework_state.media_player.movie_player.active_player = None;
         release(env, this);
     }
 }
@@ -223,6 +262,50 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 };
 
+/// Start playing the audio track of the movie at `content_url`, if it can be
+/// decoded. Returns its duration in seconds.
+fn start_audio(env: &mut Environment, player: id) -> Option<NSTimeInterval> {
+    let &MPMoviePlayerControllerHostObject {
+        content_url,
+        audio_player,
+    } = env.objc.borrow(player);
+    if content_url == nil {
+        return None;
+    }
+
+    // `play` was called again on a player that is already playing audio.
+    if audio_player != nil {
+        let duration: NSTimeInterval = msg![env; audio_player duration];
+        return Some(duration);
+    }
+
+    let no_error: MutPtr<id> = Ptr::null();
+    let audio_player: id = msg_class![env; AVAudioPlayer alloc];
+    let audio_player: id = msg![env; audio_player initWithContentsOfURL:content_url error:no_error];
+    if audio_player == nil {
+        log!("Couldn't decode the audio of the movie, it will play silently.");
+        return None;
+    }
+
+    let duration: NSTimeInterval = msg![env; audio_player duration];
+    if !duration.is_finite() || duration <= 0.0 {
+        release(env, audio_player);
+        return None;
+    }
+    // Don't trust absurd durations.
+    let duration = duration.min(6.0 * 60.0 * 60.0);
+
+    let _: bool = msg![env; audio_player play];
+    env.objc
+        .borrow_mut::<MPMoviePlayerControllerHostObject>(player)
+        .audio_player = audio_player;
+    log!(
+        "Playing the audio of the movie ({:.2} seconds), the video is not shown yet.",
+        duration
+    );
+    Some(duration)
+}
+
 /// For use by `NSRunLoop` via [super::handle_players]: check movie players'
 /// status, send notifications if necessary.
 pub(super) fn handle_players(env: &mut Environment) {
@@ -243,5 +326,7 @@ pub(super) fn handle_players(env: &mut Environment) {
         let center: id = msg_class![env; NSNotificationCenter defaultCenter];
         // TODO: should there be some user info attached?
         let _: () = msg![env; center postNotificationName:name object:object];
+        // Balances the retain done when the notification was queued.
+        release(env, object);
     }
 }
