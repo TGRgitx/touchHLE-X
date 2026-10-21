@@ -322,7 +322,14 @@ pub const CLASSES: ClassExports = objc_classes! {
         NSNumberHostObject::Int(i) => ("NS.intval", plist::Value::Integer((*i).into())),
         NSNumberHostObject::Double(d) => ("NS.dblval", plist::Value::Real(*d)),
         NSNumberHostObject::Bool(b) => ("NS.boolval", plist::Value::Boolean(*b)),
-        _ => unimplemented!("{:?}", host_object)
+        // Floats are archived as doubles.
+        NSNumberHostObject::Float(f) => ("NS.dblval", plist::Value::Real((*f).into())),
+        NSNumberHostObject::UnsignedInt(i) => ("NS.intval", plist::Value::Integer((*i).into())),
+        NSNumberHostObject::LongLong(i) => ("NS.intval", plist::Value::Integer((*i).into())),
+        NSNumberHostObject::UnsignedLongLong(i) => ("NS.intval", plist::Value::Integer((*i).into())),
+        NSNumberHostObject::Short(i) => ("NS.intval", plist::Value::Integer((*i).into())),
+        NSNumberHostObject::UnsignedShort(i) => ("NS.intval", plist::Value::Integer((*i).into())),
+        NSNumberHostObject::Char(i) => ("NS.intval", plist::Value::Integer((*i).into()))
     };
 
     let scope = get_value_to_encode_for_current_key(env, coder);
