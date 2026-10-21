@@ -1,0 +1,41 @@
+--- a/src/frameworks/foundation/ns_dictionary.rs	2026-09-04 12:47:24.000000000 +0000
++++ b/src/frameworks/foundation/ns_dictionary.rs	2026-10-21 04:27:55.796867491 +0000
+@@ -797,10 +797,19 @@
+ 
+ - (())setObject:(id)object
+          forKey:(id)key {
++    // Real iOS raises NSInvalidArgumentException here. We just ignore the
++    // call, because apps (e.g. Cut the Rope) can hit this when something we
++    // don't implement yet returns nil.
+     // TODO: raise NSInvalidArgumentException
+-    assert_ne!(object, nil);
+-    // TODO: raise NSInvalidArgumentException
+-    assert_ne!(key, nil);
++    if object == nil || key == nil {
++        log!(
++            "Warning: [(NSMutableDictionary*){:?} setObject:{:?} forKey:{:?}] with nil argument, ignoring",
++            this,
++            object,
++            key
++        );
++        return;
++    }
+     let mut host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+     host_obj.insert(env, key, object, /* copy_key: */ true);
+     *env.objc.borrow_mut(this) = host_obj;
+--- a/src/frameworks/foundation/ns_string.rs	2026-09-04 12:47:24.000000000 +0000
++++ b/src/frameworks/foundation/ns_string.rs	2026-10-21 04:27:55.796198116 +0000
+@@ -1595,6 +1595,13 @@
+     msg![env; this init]
+ }
+ 
++// NSCoding implementation (same as _touchHLE_NSString, which this class
++// doesn't inherit from)
++- (())encodeWithCoder:(id)coder {
++    let string = to_rust_string(env, this);
++    set_value_to_encode_for_current_key(env, coder, plist::Value::String(string.to_string()));
++}
++
+ - (id)initWithBytes:(ConstPtr<u8>)bytes
+              length:(NSUInteger)len
+            encoding:(NSStringEncoding)encoding {

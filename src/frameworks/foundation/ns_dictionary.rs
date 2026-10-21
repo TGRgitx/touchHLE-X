@@ -797,10 +797,19 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (())setObject:(id)object
          forKey:(id)key {
+    // Real iOS raises NSInvalidArgumentException here. We just ignore the
+    // call, because apps (e.g. Cut the Rope) can hit this when something we
+    // don't implement yet returns nil.
     // TODO: raise NSInvalidArgumentException
-    assert_ne!(object, nil);
-    // TODO: raise NSInvalidArgumentException
-    assert_ne!(key, nil);
+    if object == nil || key == nil {
+        log!(
+            "Warning: [(NSMutableDictionary*){:?} setObject:{:?} forKey:{:?}] with nil argument, ignoring",
+            this,
+            object,
+            key
+        );
+        return;
+    }
     let mut host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
     host_obj.insert(env, key, object, /* copy_key: */ true);
     *env.objc.borrow_mut(this) = host_obj;

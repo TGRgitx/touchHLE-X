@@ -1601,6 +1601,13 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; this init]
 }
 
+// NSCoding implementation (same as _touchHLE_NSString, which this class
+// doesn't inherit from)
+- (())encodeWithCoder:(id)coder {
+    let string = to_rust_string(env, this);
+    set_value_to_encode_for_current_key(env, coder, plist::Value::String(string.to_string()));
+}
+
 - (id)initWithBytes:(ConstPtr<u8>)bytes
              length:(NSUInteger)len
            encoding:(NSStringEncoding)encoding {
