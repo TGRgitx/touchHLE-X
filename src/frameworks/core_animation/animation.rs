@@ -278,10 +278,9 @@ impl State {
             let delegate = msg![env; animation delegate];
             if delegate != nil {
                 // animationDidStop:finished: is an optional informal-protocol method
-                let sel: SEL = env.objc.register_host_selector(
-                    "animationDidStop:finished:".to_string(),
-                    &mut env.mem,
-                );
+                let sel: SEL = env
+                    .objc
+                    .register_host_selector("animationDidStop:finished:".to_string(), &mut env.mem);
                 let responds: bool = msg![env; delegate respondsToSelector:sel];
                 if responds {
                     () = msg![env; delegate animationDidStop: animation finished: finished];
