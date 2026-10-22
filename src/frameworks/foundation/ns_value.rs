@@ -561,6 +561,79 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 @end
 
+// Minimal NSDecimalNumber: the value is stored as an f64 (via NSNumber), so
+// precision is limited compared to the real implementation.
+// TODO: real decimal arithmetic, NSDecimal, NSDecimalNumberHandler
+@implementation NSDecimalNumber: NSNumber
+
++ (id)decimalNumberWithString:(id)string { // NSString *
+    let value: f64 = if string == nil {
+        f64::NAN
+    } else {
+        let s = super::ns_string::to_rust_string(env, string);
+        s.trim().parse::<f64>().unwrap_or(f64::NAN)
+    };
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithDouble:value];
+    autorelease(env, new)
+}
+
++ (id)decimalNumberWithString:(id)string // NSString *
+                       locale:(id)_locale {
+    msg![env; this decimalNumberWithString:string]
+}
+
++ (id)zero {
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithDouble:0.0f64];
+    autorelease(env, new)
+}
+
++ (id)one {
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithDouble:1.0f64];
+    autorelease(env, new)
+}
+
+- (id)decimalNumberByAdding:(id)other { // NSDecimalNumber *
+    let a: f64 = msg![env; this doubleValue];
+    let b: f64 = msg![env; other doubleValue];
+    let class: Class = msg![env; this class];
+    let new: id = msg![env; class alloc];
+    let new: id = msg![env; new initWithDouble:(a + b)];
+    autorelease(env, new)
+}
+
+- (id)decimalNumberBySubtracting:(id)other { // NSDecimalNumber *
+    let a: f64 = msg![env; this doubleValue];
+    let b: f64 = msg![env; other doubleValue];
+    let class: Class = msg![env; this class];
+    let new: id = msg![env; class alloc];
+    let new: id = msg![env; new initWithDouble:(a - b)];
+    autorelease(env, new)
+}
+
+- (id)decimalNumberByMultiplyingBy:(id)other { // NSDecimalNumber *
+    let a: f64 = msg![env; this doubleValue];
+    let b: f64 = msg![env; other doubleValue];
+    let class: Class = msg![env; this class];
+    let new: id = msg![env; class alloc];
+    let new: id = msg![env; new initWithDouble:(a * b)];
+    autorelease(env, new)
+}
+
+- (id)decimalNumberByDividingBy:(id)other { // NSDecimalNumber *
+    let a: f64 = msg![env; this doubleValue];
+    let b: f64 = msg![env; other doubleValue];
+    let class: Class = msg![env; this class];
+    let new: id = msg![env; class alloc];
+    let new: id = msg![env; new initWithDouble:(a / b)];
+    autorelease(env, new)
+}
+
+@end
+
+
 };
 
 pub fn is_conversion_lossless(env: &mut Environment, this: id, type_: CFNumberType) -> bool {

@@ -408,6 +408,19 @@ pub const CLASSES: ClassExports = objc_classes! {
     file_attributes_common(env, guest_path)
 }
 
+- (bool)setAttributes:(id)attributes // NSDictionary *
+         ofItemAtPath:(id)path // NSString *
+                error:(MutPtr<id>)error { // NSError **
+    log_once!("TODO: NSFileManager setAttributes:ofItemAtPath:error: is a stub, attributes are ignored");
+    let path = ns_string::to_rust_string(env, path); // TODO: avoid copy
+    log_dbg!("[(NSFileManager *){:?} setAttributes:{:?} ofItemAtPath:{} error:{:?}]", this, attributes, path, error);
+    let exists = env.fs.exists(GuestPath::new(&path));
+    if !exists && !error.is_null() {
+        env.mem.write(error, nil);
+    }
+    exists
+}
+
 - (id)attributesOfFileSystemForPath:(id)_path
                               error:(MutPtr<id>)error {
     // TODO: other attributes

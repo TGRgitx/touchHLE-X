@@ -27,7 +27,7 @@ use crate::frameworks::core_animation::{ca_layer::CALayerHostObject, CACurrentMe
 use crate::frameworks::core_foundation::time::CFTimeInterval;
 use crate::frameworks::core_graphics::cg_color::CGColorHostObject;
 use crate::frameworks::foundation::ns_string::{from_rust_string, to_rust_string};
-use crate::objc::{id, msg, nil, release, retain};
+use crate::objc::{id, msg, nil, release, retain, SEL};
 use crate::Environment;
 
 #[derive(Default)]
@@ -260,7 +260,14 @@ impl State {
         for animation in self.started_animations {
             let delegate = msg![env; animation delegate];
             if delegate != nil {
-                () = msg![env; delegate animationDidStart: animation];
+                // animationDidStart: is an optional informal-protocol method
+                let sel: SEL = env
+                    .objc
+                    .register_host_selector("animationDidStart:".to_string(), &mut env.mem);
+                let responds: bool = msg![env; delegate respondsToSelector:sel];
+                if responds {
+                    () = msg![env; delegate animationDidStart: animation];
+                }
             }
         }
 
@@ -270,7 +277,15 @@ impl State {
         for (layer, animation, finished, removed_on_completion, key) in self.finished_animations {
             let delegate = msg![env; animation delegate];
             if delegate != nil {
-                () = msg![env; delegate animationDidStop: animation finished: finished];
+                // animationDidStop:finished: is an optional informal-protocol method
+                let sel: SEL = env.objc.register_host_selector(
+                    "animationDidStop:finished:".to_string(),
+                    &mut env.mem,
+                );
+                let responds: bool = msg![env; delegate respondsToSelector:sel];
+                if responds {
+                    () = msg![env; delegate animationDidStop: animation finished: finished];
+                }
             }
 
             if removed_on_completion {
