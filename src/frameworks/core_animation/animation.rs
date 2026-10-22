@@ -277,7 +277,7 @@ impl State {
         for (layer, animation, finished, removed_on_completion, key) in self.finished_animations {
             let delegate = msg![env; animation delegate];
             if delegate != nil {
-                // animationDidStop:finished: is an optional informal-protocol method
+                // animationDidStop:finished: is an optional delegate method
                 let sel: SEL = env
                     .objc
                     .register_host_selector("animationDidStop:finished:".to_string(), &mut env.mem);
