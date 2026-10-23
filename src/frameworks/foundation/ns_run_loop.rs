@@ -425,7 +425,9 @@ pub fn run_run_loop(
                         // Like on real iOS, the argument is ignored if the
                         // selector doesn't take one.
                         if !argument.is_null() {
-                            log_dbg!("Ignoring argument {argument:?} for selector without arguments");
+                            log_dbg!(
+                                "Ignoring argument {argument:?} for selector without arguments"
+                            );
                         }
                         () = msg_send(env, (target, selector));
                     }
