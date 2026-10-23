@@ -32,8 +32,8 @@ use crate::frameworks::core_graphics::{CGFloat, CGPoint, CGRect, CGSize};
 use crate::frameworks::foundation::{ns_array, NSInteger};
 use crate::frameworks::uikit::ui_color;
 use crate::objc::{
-    autorelease, id, impl_HostObject_with_superclass, msg, msg_class, msg_super, nil,
-    objc_classes, release, retain, ClassExports, NSZonePtr, SEL,
+    autorelease, id, impl_HostObject_with_superclass, msg, msg_class, msg_super, nil, objc_classes,
+    release, retain, ClassExports, NSZonePtr, SEL,
 };
 use crate::Environment;
 
@@ -186,7 +186,8 @@ fn make_title_view(env: &mut Environment, title: id, style: UITableViewStyle, he
         } else {
             msg_class![env; UIFont systemFontOfSize:15.0f32]
         };
-        let color: id = msg_class![env; UIColor colorWithRed:0.3f32 green:0.34f32 blue:0.42f32 alpha:1.0f32];
+        let color: id =
+            msg_class![env; UIColor colorWithRed:0.3f32 green:0.34f32 blue:0.42f32 alpha:1.0f32];
         () = msg![env; label setFont:font];
         () = msg![env; label setTextColor:color];
         () = msg![env; container setBackgroundColor:clear];
@@ -196,7 +197,8 @@ fn make_title_view(env: &mut Environment, title: id, style: UITableViewStyle, he
     } else {
         let font: id = msg_class![env; UIFont boldSystemFontOfSize:16.0f32];
         let white: id = msg_class![env; UIColor whiteColor];
-        let background: id = msg_class![env; UIColor colorWithRed:0.52f32 green:0.58f32 blue:0.64f32 alpha:1.0f32];
+        let background: id =
+            msg_class![env; UIColor colorWithRed:0.52f32 green:0.58f32 blue:0.64f32 alpha:1.0f32];
         () = msg![env; label setFont:font];
         () = msg![env; label setTextColor:white];
         () = msg![env; container setBackgroundColor:background];
@@ -338,13 +340,15 @@ fn reload_data(env: &mut Environment, this: id) {
         };
         let has_row_heights = responds(env, delegate, "tableView:heightForRowAtIndexPath:");
         for section in 0..section_count {
-            let rows: NSInteger = msg![env; data_source tableView:this numberOfRowsInSection:(section as NSInteger)];
+            let rows: NSInteger =
+                msg![env; data_source tableView:this numberOfRowsInSection:(section as NSInteger)];
             let rows = rows.max(0) as usize;
             let mut row_heights = Vec::with_capacity(rows);
             for row in 0..rows {
                 if has_row_heights {
                     let path = index_path(env, section, row);
-                    let height: CGFloat = msg![env; delegate tableView:this heightForRowAtIndexPath:path];
+                    let height: CGFloat =
+                        msg![env; delegate tableView:this heightForRowAtIndexPath:path];
                     row_heights.push(height);
                 } else {
                     row_heights.push(row_height);
@@ -478,13 +482,28 @@ fn do_layout(env: &mut Environment, this: id) {
             () = msg![env; table_header setFrame:frame];
         }
         if table_footer != nil {
-            let frame = rect(0.0, geometry.table_footer_top, width, geometry.table_footer_height);
+            let frame = rect(
+                0.0,
+                geometry.table_footer_top,
+                width,
+                geometry.table_footer_height,
+            );
             () = msg![env; table_footer setFrame:frame];
         }
         for (section, &(header_top, _, footer_top)) in sections.iter().zip(&geometry.section_tops) {
             let parts = [
-                (section.header_view, section.header_is_title, header_top, section.header_height),
-                (section.footer_view, section.footer_is_title, footer_top, section.footer_height),
+                (
+                    section.header_view,
+                    section.header_is_title,
+                    header_top,
+                    section.header_height,
+                ),
+                (
+                    section.footer_view,
+                    section.footer_is_title,
+                    footer_top,
+                    section.footer_height,
+                ),
             ];
             for (view, is_title, top, height) in parts {
                 if view == nil {
@@ -495,8 +514,12 @@ fn do_layout(env: &mut Environment, this: id) {
                     let subviews: id = msg![env; view subviews];
                     let label: id = msg![env; subviews objectAtIndex:0u32];
                     let label_inset = if grouped { 20.0 } else { 10.0 };
-                    let label_frame =
-                        rect(label_inset, 0.0, (width - 2.0 * label_inset).max(0.0), height);
+                    let label_frame = rect(
+                        label_inset,
+                        0.0,
+                        (width - 2.0 * label_inset).max(0.0),
+                        height,
+                    );
                     () = msg![env; label setFrame:label_frame];
                     () = msg![env; label setNeedsDisplay];
                 }
@@ -578,7 +601,11 @@ fn do_layout(env: &mut Environment, this: id) {
         if env.objc.borrow::<UITableViewHostObject>(this).selected == Some((section, row)) {
             () = msg![env; cell setSelected:true animated:false];
         }
-        if responds(env, delegate, "tableView:willDisplayCell:forRowAtIndexPath:") {
+        if responds(
+            env,
+            delegate,
+            "tableView:willDisplayCell:forRowAtIndexPath:",
+        ) {
             () = msg![env; delegate tableView:this willDisplayCell:cell forRowAtIndexPath:path];
         }
         env.objc
@@ -623,7 +650,13 @@ fn refresh(env: &mut Environment, this: id) {
 
 /// Called by the run loop every iteration. Lays out tables that need it.
 pub fn update_pending_tables(env: &mut Environment) {
-    let tables = env.framework_state.uikit.ui_view.ui_table_view.tables.clone();
+    let tables = env
+        .framework_state
+        .uikit
+        .ui_view
+        .ui_table_view
+        .tables
+        .clone();
     for table in tables {
         let host = env.objc.borrow::<UITableViewHostObject>(table);
         if !(host.needs_layout || host.needs_reload) || host.data_source == nil {
@@ -677,7 +710,11 @@ fn select_row(env: &mut Environment, this: id, section: usize, row: usize) {
 }
 
 fn deselect_row(env: &mut Environment, this: id) {
-    let previous = env.objc.borrow_mut::<UITableViewHostObject>(this).selected.take();
+    let previous = env
+        .objc
+        .borrow_mut::<UITableViewHostObject>(this)
+        .selected
+        .take();
     if let Some((s, r)) = previous {
         set_row_selected(env, this, s, r, false);
     }
@@ -697,7 +734,12 @@ fn row_rect(env: &mut Environment, this: id, section: usize, row: usize) -> Opti
     let height = *info.row_heights.get(row)?;
     let top = geometry.section_tops[section].1 + info.row_heights[..row].iter().sum::<CGFloat>();
     let bounds: CGRect = msg![env; this bounds];
-    Some(rect(inset, top, (bounds.size.width - 2.0 * inset).max(0.0), height))
+    Some(rect(
+        inset,
+        top,
+        (bounds.size.width - 2.0 * inset).max(0.0),
+        height,
+    ))
 }
 
 fn path_to_indices(env: &mut Environment, path: id) -> Option<(usize, usize)> {
