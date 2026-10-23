@@ -829,12 +829,12 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (())setContentOffset:(CGPoint)offset {
-    msg_super![env; this setContentOffset:offset];
+    () = msg_super![env; this setContentOffset:offset];
     mark_for_layout(env, this);
 }
 
 - (())setFrame:(CGRect)frame {
-    msg_super![env; this setFrame:frame];
+    () = msg_super![env; this setFrame:frame];
     mark_for_layout(env, this);
 }
 
