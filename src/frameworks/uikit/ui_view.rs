@@ -263,7 +263,14 @@ pub const CLASSES: ClassExports = objc_classes! {
     log_dbg!("[UIView commitAnimations]");
 
     // TODO: What if there's interleaved UIView animations and CATransactions?
-    let animations = ca_transaction::ThreadLocalState::get_current_transaction(env).unwrap().get_animations();
+    // Like on real iOS, a commit without a matching begin is ignored.
+    let animations = match ca_transaction::ThreadLocalState::get_current_transaction(env) {
+        Some(transaction) => transaction.get_animations(),
+        None => {
+            log!("Warning: [UIView commitAnimations] without a matching beginAnimations, ignoring");
+            return;
+        }
+    };
 
     let delegate: id = msg_class![env; CATransaction valueForKey:(get_static_str(env, touchHLE_kCATransactionAnimationDelegate))];
     if animations.is_empty() && delegate == nil {
@@ -326,7 +333,8 @@ pub const CLASSES: ClassExports = objc_classes! {
 
     () = msg_class![env; CATransaction commit];
 
-    env.framework_state.uikit.ui_view.animation_block_count -= 1;
+    let state = &mut env.framework_state.uikit.ui_view;
+    state.animation_block_count = state.animation_block_count.saturating_sub(1);
 }
 
 // TODO: accessors etc
