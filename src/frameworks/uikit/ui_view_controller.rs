@@ -177,7 +177,13 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (())setTitle:(id)title { // NSString *
-    todo_objc_setter!(this, to_rust_string(env, title));
+    // The title may be nil, e.g. when clearing it
+    let title = if title == nil {
+        std::borrow::Cow::Borrowed("(null)")
+    } else {
+        to_rust_string(env, title)
+    };
+    todo_objc_setter!(this, title);
 }
 - (())setEditing:(bool)editing {
     todo_objc_setter!(this, editing);
