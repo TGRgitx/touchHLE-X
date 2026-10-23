@@ -422,7 +422,11 @@ pub fn run_run_loop(
                     if selector.as_str(&env.mem).ends_with(':') {
                         () = msg_send(env, (target, selector, argument));
                     } else {
-                        assert!(argument.is_null());
+                        // Like on real iOS, the argument is ignored if the
+                        // selector doesn't take one.
+                        if !argument.is_null() {
+                            log_dbg!("Ignoring argument {argument:?} for selector without arguments");
+                        }
                         () = msg_send(env, (target, selector));
                     }
 

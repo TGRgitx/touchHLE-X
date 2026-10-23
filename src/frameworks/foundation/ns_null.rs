@@ -5,7 +5,7 @@
  */
 //! `NSNull`.
 
-use crate::objc::{id, objc_classes, ClassExports, TrivialHostObject};
+use crate::objc::{id, msg_class, objc_classes, ClassExports, TrivialHostObject};
 
 #[derive(Default)]
 pub struct State {
@@ -37,6 +37,14 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)retain { this }
 - (())release {}
 - (id)autorelease { this }
+
+// NSCoding implementation. NSNull has no state, so there is nothing to encode,
+// and decoding just gives back the singleton.
+- (())encodeWithCoder:(id)_coder {
+}
+- (id)initWithCoder:(id)_coder {
+    msg_class![env; NSNull null]
+}
 
 @end
 

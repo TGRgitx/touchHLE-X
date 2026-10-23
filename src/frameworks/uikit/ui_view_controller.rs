@@ -13,13 +13,16 @@ use crate::frameworks::foundation::ns_objc_runtime::NSStringFromClass;
 use crate::frameworks::foundation::ns_string::{from_rust_string, get_static_str, to_rust_string};
 use crate::frameworks::foundation::NSInteger;
 use crate::frameworks::uikit::ui_application::{
-    UIInterfaceOrientation, UIInterfaceOrientationPortrait,
+    UIInterfaceOrientation, UIInterfaceOrientationLandscapeLeft,
+    UIInterfaceOrientationLandscapeRight, UIInterfaceOrientationPortrait,
+    UIInterfaceOrientationPortraitUpsideDown,
 };
 use crate::frameworks::uikit::ui_view::set_view_controller;
 use crate::objc::{
     id, msg, msg_class, nil, objc_classes, release, retain, todo_objc_setter, Class, ClassExports,
     HostObject, NSZonePtr,
 };
+use crate::window::DeviceOrientation;
 use crate::Environment;
 
 pub mod ui_navigation_controller;
@@ -203,6 +206,17 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 - (())dismissMoviePlayerViewControllerAnimated {
     log!("TODO: [(UIViewController*){:?} dismissMoviePlayerViewControllerAnimated]", this); // TODO
+}
+
+- (UIInterfaceOrientation)interfaceOrientation {
+    // The UI rotates in the opposite direction to the device, so the landscape
+    // values are swapped (see the UIInterfaceOrientation constants).
+    match env.window().current_rotation() {
+        DeviceOrientation::Portrait => UIInterfaceOrientationPortrait,
+        DeviceOrientation::PortraitUpsideDown => UIInterfaceOrientationPortraitUpsideDown,
+        DeviceOrientation::LandscapeLeft => UIInterfaceOrientationLandscapeRight,
+        DeviceOrientation::LandscapeRight => UIInterfaceOrientationLandscapeLeft,
+    }
 }
 
 - (bool)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interface_orientation {
