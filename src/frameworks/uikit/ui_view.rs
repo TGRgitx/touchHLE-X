@@ -16,6 +16,7 @@ pub mod ui_page_control;
 pub mod ui_picker_view;
 pub mod ui_scroll_view;
 pub mod ui_table_view;
+pub mod ui_table_view_cell;
 pub mod ui_web_view;
 pub mod ui_window;
 
@@ -72,6 +73,7 @@ pub struct State {
     /// List of views for internal purposes. Non-retaining!
     pub(super) views: Vec<id>,
     pub ui_window: ui_window::State,
+    pub ui_table_view: ui_table_view::State,
     pub animation_block_count: usize,
     /// Set by `+[UIView setAnimationsEnabled:]`. Stored inverted so that
     /// the `Default` value means "enabled", like on real iOS.
