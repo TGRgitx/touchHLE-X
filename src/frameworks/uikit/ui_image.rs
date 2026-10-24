@@ -5,7 +5,10 @@
  */
 //! `UIImage`.
 
-use crate::frameworks::core_graphics::cg_context::CGContextDrawImage;
+use crate::frameworks::core_graphics::cg_context::{
+    CGContextDrawImage, CGContextRef, CGContextRestoreGState, CGContextSaveGState,
+    CGContextScaleCTM, CGContextTranslateCTM,
+};
 use crate::frameworks::core_graphics::cg_image::{
     self, CGImageGetHeight, CGImageGetWidth, CGImageRef, CGImageRelease, CGImageRetain,
 };
@@ -43,6 +46,26 @@ struct UIImageHostObject {
     cg_image: CGImageRef,
 }
 impl HostObject for UIImageHostObject {}
+
+/// Draw an image so that it appears upright in UIKit's co-ordinate system.
+///
+/// In a context provided by UIKit, Core Graphics' idea of "up" is mirrored
+/// relative to what ends up on screen, so a plain `CGContextDrawImage` would
+/// make the image appear upside-down. Real UIKit compensates for this when
+/// drawing a `UIImage`, so we do the same by mirroring vertically around the
+/// destination rectangle.
+fn draw_image_upright(
+    env: &mut Environment,
+    context: CGContextRef,
+    rect: CGRect,
+    image: CGImageRef,
+) {
+    CGContextSaveGState(env, context);
+    CGContextTranslateCTM(env, context, 0.0, 2.0 * rect.origin.y + rect.size.height);
+    CGContextScaleCTM(env, context, 1.0, -1.0);
+    CGContextDrawImage(env, context, rect, image);
+    CGContextRestoreGState(env, context);
+}
 
 pub const CLASSES: ClassExports = objc_classes! {
 
@@ -174,8 +197,12 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (())drawInRect:(CGRect)rect {
     let context = UIGraphicsGetCurrentContext(env);
+    if context == nil {
+        log!("Warning: [(UIImage*){:?} drawInRect:{:?}] is called with nil context, ignoring.", this, rect);
+        return;
+    }
     let image = env.objc.borrow::<UIImageHostObject>(this).cg_image;
-    CGContextDrawImage(env, context, rect, image);
+    draw_image_upright(env, context, rect, image);
 }
 
 - (())drawAtPoint:(CGPoint)point {
@@ -192,7 +219,7 @@ pub const CLASSES: ClassExports = objc_classes! {
             height: CGImageGetHeight(env, image) as CGFloat,
         }
     };
-    CGContextDrawImage(env, context, rect, image);
+    draw_image_upright(env, context, rect, image);
 }
 
 @end
