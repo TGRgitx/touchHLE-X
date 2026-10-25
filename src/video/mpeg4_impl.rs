@@ -325,25 +325,51 @@ pub struct Frame<'a> {
 }
 
 impl Frame<'_> {
+    /// The color of a pixel as RGB (BT.601 limited range).
+    fn rgb_at(&self, row: usize, col: usize) -> [u8; 3] {
+        let y = i32::from(self.y[row * self.y_stride + col]) - 16;
+        let uv_index = (row / 2) * self.uv_stride + col / 2;
+        let u = i32::from(self.u[uv_index]) - 128;
+        let v = i32::from(self.v[uv_index]) - 128;
+        let c = 298 * y;
+        let r = (c + 409 * v + 128) >> 8;
+        let g = (c - 100 * u - 208 * v + 128) >> 8;
+        let b = (c + 516 * u + 128) >> 8;
+        [
+            r.clamp(0, 255) as u8,
+            g.clamp(0, 255) as u8,
+            b.clamp(0, 255) as u8,
+        ]
+    }
+
     /// Convert to RGBA (8 bits per channel, BT.601 limited range) in `out`,
     /// which must have room for width x height x 4 bytes.
     pub fn write_rgba(&self, out: &mut [u8]) {
         for row in 0..self.height {
             for col in 0..self.width {
-                let y = i32::from(self.y[row * self.y_stride + col]) - 16;
-                let u_i = (row / 2) * self.uv_stride + col / 2;
-                let u = i32::from(self.u[u_i]) - 128;
-                let v = i32::from(self.v[u_i]) - 128;
-                let c = 298 * y;
-                let r = (c + 409 * v + 128) >> 8;
-                let g = (c - 100 * u - 208 * v + 128) >> 8;
-                let b = (c + 516 * u + 128) >> 8;
+                let [r, g, b] = self.rgb_at(row, col);
                 let o = (row * self.width + col) * 4;
                 if let Some(px) = out.get_mut(o..o + 4) {
-                    px[0] = r.clamp(0, 255) as u8;
-                    px[1] = g.clamp(0, 255) as u8;
-                    px[2] = b.clamp(0, 255) as u8;
-                    px[3] = 255;
+                    px.copy_from_slice(&[r, g, b, 255]);
+                }
+            }
+        }
+    }
+
+    /// Like `write_rgba`, but the picture is rotated by 90 degrees, so the
+    /// result is height pixels wide and width pixels tall.
+    pub fn write_rgba_rotated(&self, out: &mut [u8], clockwise: bool) {
+        for row in 0..self.height {
+            for col in 0..self.width {
+                let [r, g, b] = self.rgb_at(row, col);
+                let (x, y) = if clockwise {
+                    (self.height - 1 - row, col)
+                } else {
+                    (row, self.width - 1 - col)
+                };
+                let o = (y * self.height + x) * 4;
+                if let Some(px) = out.get_mut(o..o + 4) {
+                    px.copy_from_slice(&[r, g, b, 255]);
                 }
             }
         }

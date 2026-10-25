@@ -110,7 +110,7 @@ impl Iterator for Boxes<'_> {
 /// contents.
 fn find(data: &[u8], kind: &[u8; 4], range: (usize, usize)) -> Option<(usize, usize)> {
     boxes(data, range.0, range.1)
-        .find(|b| &b.0 == kind)
+        .find(|b| b.0 == *kind)
         .map(|b| (b.1, b.2))
 }
 
@@ -176,7 +176,7 @@ impl VideoTrack {
     pub fn parse(file: &[u8]) -> Result<VideoTrack, &'static str> {
         let moov = find(file, b"moov", (0, file.len())).ok_or("no moov box")?;
         for (kind, start, end) in boxes(file, moov.0, moov.1) {
-            if &kind != b"trak" {
+            if kind != *b"trak" {
                 continue;
             }
             if let Some(track) = parse_track(file, (start, end)) {

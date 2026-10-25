@@ -286,7 +286,8 @@ forUndefinedKey:(id)key { // NSString*
         if sel.as_str(&env.mem).ends_with(':') {
             () = msg_send(env, (this, sel, arg));
         } else {
-            assert!(arg.is_null());
+            // Like on real iOS, the argument is ignored if the selector doesn't
+            // take one.
             () = msg_send(env, (this, sel));
         }
         return;

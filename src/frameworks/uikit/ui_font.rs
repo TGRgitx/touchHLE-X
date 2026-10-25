@@ -11,7 +11,7 @@ use crate::frameworks::core_graphics::cg_bitmap_context::CGBitmapContextDrawer;
 use crate::frameworks::core_graphics::{CGFloat, CGPoint, CGRect, CGSize};
 use crate::frameworks::foundation::ns_string::to_rust_string;
 use crate::frameworks::foundation::NSInteger;
-use crate::objc::{autorelease, id, msg, objc_classes, ClassExports, HostObject};
+use crate::objc::{autorelease, id, msg, objc_classes, Class, ClassExports, HostObject};
 use crate::Environment;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -149,6 +149,17 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (CGFloat)pointSize {
     env.objc.borrow::<UIFontHostObject>(this).size
+}
+
+- (id)fontWithSize:(CGFloat)font_size {
+    let kind = env.objc.borrow::<UIFontHostObject>(this).kind;
+    let host_object = UIFontHostObject {
+        size: font_size,
+        kind,
+    };
+    let class: Class = msg![env; this class];
+    let new = env.objc.alloc_object(class, Box::new(host_object), &mut env.mem);
+    autorelease(env, new)
 }
 
 - (CGFloat)ascender {

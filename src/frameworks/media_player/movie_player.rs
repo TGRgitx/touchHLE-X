@@ -75,9 +75,12 @@ pub const CONSTANTS: ConstantExports = &[
 struct MPMoviePlayerControllerHostObject {
     // NSURL *
     content_url: id,
-    /// `AVAudioPlayer*` playing the movie's audio track, or nil. There is no
-    /// video decoder yet, so only the sound is played.
+    /// `AVAudioPlayer*` playing the movie's audio track, or nil.
     audio_player: id,
+    /// The movie's video while it is being shown, if it could be decoded.
+    video: Option<Box<VideoPlayback>>,
+    /// Set when the user has tapped the screen to skip the movie.
+    skip_requested: bool,
 }
 impl HostObject for MPMoviePlayerControllerHostObject {}
 
@@ -93,6 +96,8 @@ pub const CLASSES: ClassExports = objc_classes! {
     let host_object = Box::new(MPMoviePlayerControllerHostObject {
         content_url: nil,
         audio_player: nil,
+        video: None,
+        skip_requested: false,
     });
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
@@ -119,7 +124,8 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (())dealloc {
-    let &MPMoviePlayerControllerHostObject { content_url, audio_player } = env.objc.borrow(this);
+    stop_video(env, this);
+    let &MPMoviePlayerControllerHostObject { content_url, audio_player, .. } = env.objc.borrow(this);
     release(env, audio_player); // stops playback
     release(env, content_url);
 
@@ -157,6 +163,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     nil // TODO
 }
 
+// Called when the screen is tapped while the video is shown.
+- (())_touchHLE_skipMovie {
+    env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(this).skip_requested = true;
+}
+
 - (MPMoviePlaybackState)playbackState {
     MPMoviePlaybackStateStopped // TODO
 }
@@ -189,13 +200,17 @@ pub const CLASSES: ClassExports = objc_classes! {
         env.framework_state.media_player.movie_player.active_player = Some(this);
     }
 
-    // There is no video decoding yet, but we can play the audio track and use
-    // its length as the length of the movie. If the audio can't be played,
-    // act as if playback immediately completed after 1 second
-    // (various apps wait for this, such as BIA and Hero of Sparta).
-    let delay = match start_audio(env, this) {
-        Some(seconds) => Duration::from_secs_f64(seconds),
-        None => Duration::from_millis(1000),
+    // Play the audio track and show the video, and use their lengths as the
+    // length of the movie. If neither can be played, act as if playback
+    // immediately completed after 1 second (various apps wait for this, such
+    // as BIA and Hero of Sparta).
+    let audio_duration = start_audio(env, this);
+    let video_duration = start_video(env, this);
+    let delay = match (audio_duration, video_duration) {
+        (None, None) => Duration::from_millis(1000),
+        (audio, video) => {
+            Duration::from_secs_f64(audio.unwrap_or(0.0).max(video.unwrap_or(0.0)))
+        }
     };
     let notif = (MPMoviePlayerPlaybackDidFinishNotification, this, Instant::now().checked_add(delay).unwrap());
     for (name, obj, _) in &mut State::get(env).pending_notifications {
@@ -217,7 +232,8 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (())stop {
     log!("TODO: [(MPMoviePlayerController*){:?} stop]", this);
 
-    // Stop the audio.
+    // Stop the video and the audio.
+    stop_video(env, this);
     let audio_player = env.objc.borrow::<MPMoviePlayerControllerHostObject>(this).audio_player;
     if audio_player != nil {
         env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(this).audio_player = nil;
@@ -268,6 +284,7 @@ fn start_audio(env: &mut Environment, player: id) -> Option<NSTimeInterval> {
     let &MPMoviePlayerControllerHostObject {
         content_url,
         audio_player,
+        ..
     } = env.objc.borrow(player);
     if content_url == nil {
         return None;
@@ -299,16 +316,14 @@ fn start_audio(env: &mut Environment, player: id) -> Option<NSTimeInterval> {
     env.objc
         .borrow_mut::<MPMoviePlayerControllerHostObject>(player)
         .audio_player = audio_player;
-    log!(
-        "Playing the audio of the movie ({:.2} seconds), the video is not shown yet.",
-        duration
-    );
+    log!("Playing the audio of the movie ({:.2} seconds)", duration);
     Some(duration)
 }
 
 /// For use by `NSRunLoop` via [super::handle_players]: check movie players'
 /// status, send notifications if necessary.
 pub(super) fn handle_players(env: &mut Environment) {
+    step_players(env);
     let mut notifs_to_run = Vec::new();
     let pending_notifs = &mut State::get(env).pending_notifications;
     let mut i = 0;
@@ -322,6 +337,10 @@ pub(super) fn handle_players(env: &mut Environment) {
         }
     }
     for (name_str, object) in notifs_to_run {
+        if name_str == MPMoviePlayerPlaybackDidFinishNotification {
+            // The movie has ended, so its picture goes away.
+            stop_video(env, object);
+        }
         let name = ns_string::get_static_str(env, name_str);
         let center: id = msg_class![env; NSNotificationCenter defaultCenter];
         // TODO: should there be some user info attached?
@@ -330,3 +349,5 @@ pub(super) fn handle_players(env: &mut Environment) {
         release(env, object);
     }
 }
+
+include!("movie_video_impl.rs");

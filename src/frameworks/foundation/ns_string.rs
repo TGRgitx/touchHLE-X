@@ -1166,19 +1166,52 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (CGSize)drawAtPoint:(CGPoint)point
              forWidth:(CGFloat)width
              withFont:(id)font // UIFont*
-          minFontSize:(CGFloat)_min_font_size
+          minFontSize:(CGFloat)min_font_size
        actualFontSize:(MutPtr<CGFloat>)actual_font_size
         lineBreakMode:(UILineBreakMode)line_break_mode
-   baselineAdjustment:(NSInteger)_baseline_adjustment {
-    // TODO: shrink the font to fit the width, down to minFontSize. For now the
-    // text is just clipped to the width, so the font size never changes.
-    if !actual_font_size.is_null() {
-        let size: CGFloat = msg![env; font pointSize];
-        env.mem.write(actual_font_size, size);
-    }
+   baselineAdjustment:(NSInteger)baseline_adjustment { // UIBaselineAdjustment
     // TODO: avoid copy
     let text = to_rust_string(env, this);
-    ui_font::draw_at_point(env, font, &text, point, Some((width, line_break_mode)))
+    let original_size: CGFloat = msg![env; font pointSize];
+
+    // Shrink the font, a point at a time, until the text fits in the width or
+    // the minimum size is reached.
+    let mut draw_font: id = font;
+    let mut size = original_size;
+    while size > min_font_size {
+        let text_size = ui_font::size_with_font(env, draw_font, &text, None);
+        if text_size.width <= width {
+            break;
+        }
+        size = (size - 1.0).max(min_font_size);
+        draw_font = msg![env; font fontWithSize:size];
+    }
+
+    // A smaller font has a smaller ascender and line height, so move the text
+    // to keep it where the original font would have put it.
+    let mut point = point;
+    if size != original_size {
+        match baseline_adjustment {
+            0 => {
+                // UIBaselineAdjustmentAlignBaselines
+                let old_ascender: CGFloat = msg![env; font ascender];
+                let new_ascender: CGFloat = msg![env; draw_font ascender];
+                point.y += old_ascender - new_ascender;
+            }
+            1 => {
+                // UIBaselineAdjustmentAlignCenters
+                let old_height: CGFloat = msg![env; font lineHeight];
+                let new_height: CGFloat = msg![env; draw_font lineHeight];
+                point.y += (old_height - new_height) / 2.0;
+            }
+            _ => {} // UIBaselineAdjustmentNone
+        }
+    }
+
+    if !actual_font_size.is_null() {
+        env.mem.write(actual_font_size, size);
+    }
+    ui_font::draw_at_point(env, draw_font, &text, point, Some((width, line_break_mode)))
 }
 
 - (CGSize)drawInRect:(CGRect)rect
