@@ -79,7 +79,8 @@ struct MPMoviePlayerControllerHostObject {
     audio_player: id,
     /// The movie's video while it is being shown, if it could be decoded.
     video: Option<Box<VideoPlayback>>,
-    /// Set when the user has tapped the screen to skip the movie.
+    /// Set when the user has tapped the screen to skip the movie. It is
+    /// acted on the next time the run loop comes around.
     skip_requested: bool,
 }
 impl HostObject for MPMoviePlayerControllerHostObject {}
@@ -163,9 +164,18 @@ pub const CLASSES: ClassExports = objc_classes! {
     nil // TODO
 }
 
-// Called when the screen is tapped while the video is shown.
-- (())_touchHLE_skipMovie {
-    env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(this).skip_requested = true;
+// Called when the screen is tapped while the video is shown. This is a class
+// method rather than being sent to the player, because the receiver of a tap
+// is not retained: it could be a player that has been freed by the time a
+// tap that was already in flight arrives.
++ (())_touchHLE_skipMovie {
+    let Some(player) = State::get(env).active_player else {
+        return;
+    };
+    let host_object = env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(player);
+    if host_object.video.is_some() {
+        host_object.skip_requested = true;
+    }
 }
 
 - (MPMoviePlaybackState)playbackState {

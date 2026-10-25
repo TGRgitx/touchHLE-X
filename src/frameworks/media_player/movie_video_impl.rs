@@ -132,10 +132,13 @@ fn start_video(env: &mut Environment, player: id) -> Option<NSTimeInterval> {
     };
     let control: id = msg_class![env; UIControl alloc];
     let control: id = msg![env; control initWithFrame:control_frame];
+    // The target is the class and not the player, see the comment on the
+    // method.
+    let player_class: id = msg_class![env; MPMoviePlayerController class];
     let skip = env
         .objc
         .register_host_selector("_touchHLE_skipMovie".to_string(), &mut env.mem);
-    () = msg![env; control addTarget:player action:skip forControlEvents:1u32];
+    () = msg![env; control addTarget:player_class action:skip forControlEvents:1u32];
     () = msg![env; window addSubview:control];
 
     let image_frame = fit_rect(&bounds, track.height as f32, track.width as f32);
@@ -260,15 +263,39 @@ fn stop_video(env: &mut Environment, player: id) {
     release(env, window);
 }
 
+/// Stop the sound of a movie.
+fn stop_audio(env: &mut Environment, player: id) {
+    let host_object = env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(player);
+    let audio_player = std::mem::replace(&mut host_object.audio_player, nil);
+    // This stops playback.
+    release(env, audio_player);
+}
+
+/// What happens when the user taps the screen to skip a movie. This is like
+/// pressing the Done button of the real movie player: the movie is over and
+/// the app is told so with the playback-finished notification. It's up to
+/// the app what to do with the player after that (typically it stops and
+/// releases it), so the player is left alone.
+fn skip_movie(env: &mut Environment, player: id) {
+    stop_video(env, player);
+    stop_audio(env, player);
+    for (name, object, time) in &mut State::get(env).pending_notifications {
+        if *name == MPMoviePlayerPlaybackDidFinishNotification && *object == player {
+            *time = Instant::now();
+        }
+    }
+}
+
 /// Called every time the run loop comes around: shows the video frames that
-/// are due, and stops the movie if the user has tapped the screen.
+/// are due, and skips the movie if the user has tapped the screen.
 fn step_players(env: &mut Environment) {
     let Some(player) = State::get(env).active_player else {
         return;
     };
     let host_object = env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(player);
-    if std::mem::take(&mut host_object.skip_requested) {
-        let _: () = msg![env; player stop];
+    let skip = std::mem::take(&mut host_object.skip_requested);
+    if skip && host_object.video.is_some() {
+        skip_movie(env, player);
         return;
     }
     step_video(env, player);
