@@ -1163,6 +1163,24 @@ pub const CLASSES: ClassExports = objc_classes! {
     ui_font::draw_at_point(env, font, &text, point, Some((width, line_break_mode)))
 }
 
+- (CGSize)drawAtPoint:(CGPoint)point
+             forWidth:(CGFloat)width
+             withFont:(id)font // UIFont*
+          minFontSize:(CGFloat)_min_font_size
+       actualFontSize:(MutPtr<CGFloat>)actual_font_size
+        lineBreakMode:(UILineBreakMode)line_break_mode
+   baselineAdjustment:(NSInteger)_baseline_adjustment {
+    // TODO: shrink the font to fit the width, down to minFontSize. For now the
+    // text is just clipped to the width, so the font size never changes.
+    if !actual_font_size.is_null() {
+        let size: CGFloat = msg![env; font pointSize];
+        env.mem.write(actual_font_size, size);
+    }
+    // TODO: avoid copy
+    let text = to_rust_string(env, this);
+    ui_font::draw_at_point(env, font, &text, point, Some((width, line_break_mode)))
+}
+
 - (CGSize)drawInRect:(CGRect)rect
             withFont:(id)font { // UIFont*
     msg![env; this drawInRect:rect

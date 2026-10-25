@@ -976,43 +976,44 @@ impl Environment {
     }
 
     /// If the registers at the time of a panic look like an Objective-C
-    /// message send (receiver in R0, selector in R1), print the selector and
-    /// the class of the receiver. This is only a guess, but it is often right
-    /// and makes it much easier to see what the app was doing.
+    /// message send (receiver in R0, selector in R1, or R1 and R2 for methods
+    /// returning a struct), print the selector and the class of the receiver.
+    /// This is only a guess, but it is often right and makes it much easier to
+    /// see what the app was doing.
     fn dump_objc_call_hint(&self) {
         let regs = self.cpu.regs();
-        let (receiver, selector) = (regs[0], regs[1]);
-        if !(0x1000..0x4000_0000).contains(&selector) {
-            return;
-        }
-        let selector_ptr: mem::ConstPtr<u8> = mem::Ptr::from_bits(selector);
-        let name = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.mem
-                .cstr_at_utf8(selector_ptr)
-                .ok()
-                .map(|s| s.to_string())
-        }))
-        .ok()
-        .flatten();
-        let Some(name) = name else {
-            return;
-        };
-        if name.is_empty() || !name.is_ascii() || name.len() > 200 {
-            return;
-        }
-        let receiver_id: crate::objc::id = mem::Ptr::from_bits(receiver);
-        let class_name = if self.objc.get_host_object(receiver_id).is_some() {
+        for (receiver, selector) in [(regs[0], regs[1]), (regs[1], regs[2])] {
+            if !(0x1000..0x4000_0000).contains(&selector) {
+                continue;
+            }
+            let selector_ptr: mem::ConstPtr<u8> = mem::Ptr::from_bits(selector);
+            let name = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.mem
+                    .cstr_at_utf8(selector_ptr)
+                    .ok()
+                    .map(|s| s.to_string())
+            }))
+            .ok()
+            .flatten();
+            let Some(name) = name else {
+                continue;
+            };
+            if name.is_empty() || !name.is_ascii() || name.len() > 200 {
+                continue;
+            }
+            let receiver_id: crate::objc::id = mem::Ptr::from_bits(receiver);
+            if self.objc.get_host_object(receiver_id).is_none() {
+                continue;
+            }
             let class = crate::objc::ObjC::read_isa(receiver_id, &self.mem);
-            self.objc.get_class_name(class).to_string()
-        } else {
-            "(not a live object)".to_string()
-        };
-        echo_no_panic!(
-            "Last Objective-C message might have been: [{} {}] (receiver {:#x})",
-            class_name,
-            name,
-            receiver
-        );
+            echo_no_panic!(
+                "Last Objective-C message might have been: [{} {}] (receiver {:#x})",
+                self.objc.get_class_name(class),
+                name,
+                receiver
+            );
+            return;
+        }
     }
 
     fn stack_trace_current(&self) {
