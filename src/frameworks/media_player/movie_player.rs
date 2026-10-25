@@ -103,6 +103,20 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
 
+// Called when the screen is tapped while the video is shown. This is a class
+// method rather than being sent to the player, because the receiver of a tap
+// is not retained: it could be a player that has been freed by the time a
+// tap that was already in flight arrives.
++ (())_touchHLE_skipMovie {
+    let Some(player) = State::get(env).active_player else {
+        return;
+    };
+    let host_object = env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(player);
+    if host_object.video.is_some() {
+        host_object.skip_requested = true;
+    }
+}
+
 - (id)initWithContentURL:(id)url { // NSURL*
     log!(
         "TODO: [(MPMoviePlayerController*){:?} initWithContentURL:{:?} ({:?})]",
@@ -162,20 +176,6 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (id)view {
     nil // TODO
-}
-
-// Called when the screen is tapped while the video is shown. This is a class
-// method rather than being sent to the player, because the receiver of a tap
-// is not retained: it could be a player that has been freed by the time a
-// tap that was already in flight arrives.
-+ (())_touchHLE_skipMovie {
-    let Some(player) = State::get(env).active_player else {
-        return;
-    };
-    let host_object = env.objc.borrow_mut::<MPMoviePlayerControllerHostObject>(player);
-    if host_object.video.is_some() {
-        host_object.skip_requested = true;
-    }
 }
 
 - (MPMoviePlaybackState)playbackState {
