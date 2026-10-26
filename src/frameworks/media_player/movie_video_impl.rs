@@ -220,6 +220,9 @@ fn step_video(env: &mut Environment, player: id) {
             }
         }
         if decoded_any {
+            if !video.shown_any {
+                log!("Showing the first frame of the movie (sample {})", video.next_sample);
+            }
             show_frame(env, &video);
             video.shown_any = true;
         }
@@ -244,6 +247,12 @@ fn stop_video(env: &mut Environment, player: id) {
     else {
         return;
     };
+    log!(
+        "Stopping the movie's video (shown any frame: {}, frames consumed: {}/{})",
+        video.shown_any,
+        video.next_sample,
+        video.track.samples.len(),
+    );
     let window = video.window;
     () = msg![env; window setHidden:true];
     release(env, window);

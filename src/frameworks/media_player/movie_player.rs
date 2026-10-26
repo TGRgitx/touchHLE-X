@@ -333,6 +333,7 @@ pub(super) fn handle_players(env: &mut Environment) {
             // The movie has ended, so its picture goes away.
             stop_video(env, object);
         }
+        log!("Posting {} for movie player {:?}", name_str, object);
         let name = ns_string::get_static_str(env, name_str);
         let center: id = msg_class![env; NSNotificationCenter defaultCenter];
         // TODO: should there be some user info attached?
