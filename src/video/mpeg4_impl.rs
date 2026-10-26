@@ -12,8 +12,9 @@
 // pixel motion, MPEG quantization matrices, data partitioning and the other
 // tools that are not part of Simple Profile.
 //
-// The decoder has been tested for bit-exactness against libavcodec's output
-// (with its C "simple" IDCT, which is what the IDCT here is equivalent to).
+// The IDCT meets the accuracy criteria of IEEE Std 1180-1990 (see its tests),
+// which is what the standard requires; other decoders may therefore differ
+// from this one by one level in some pixels.
 // It never panics on malformed input: errors are returned instead.
 
 use super::mpeg4_tables::*;
@@ -114,11 +115,15 @@ impl Vlc {
         Vlc { bits, table }
     }
 
-    fn from16(bits: u32, codes: &[(u16, u8)]) -> Vlc {
-        let codes: Vec<(u32, u32)> = codes
+    /// The lookup table for a run/level code table. The symbol of a code is
+    /// the index of its entry, and the escape code gets the symbol after the
+    /// last entry.
+    fn from_tcoef(bits: u32, entries: &[Tcoef]) -> Vlc {
+        let mut codes: Vec<(u32, u32)> = entries
             .iter()
-            .map(|&(c, l)| (u32::from(c), u32::from(l)))
+            .map(|e| (u32::from(e.code), u32::from(e.len)))
             .collect();
+        codes.push((u32::from(TCOEF_ESCAPE.0), u32::from(TCOEF_ESCAPE.1)));
         Vlc::new(bits, &codes)
     }
 
@@ -143,134 +148,292 @@ impl Vlc {
 
 /// Find the position of the next 00 00 01 start code prefix.
 fn find_start_code(data: &[u8], from: usize) -> Option<usize> {
-    let mut i = from;
-    while i + 3 <= data.len() {
-        if data[i + 2] > 1 {
-            i += 3;
-        } else if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 {
-            return Some(i);
-        } else {
-            i += 1;
+    let rest = data.get(from..)?;
+    let offset = rest.windows(3).position(|w| w == [0, 0, 1])?;
+    Some(from + offset)
+}
+
+// ---------------------------------------------------------------------------
+// Inverse DCT, written directly from its definition (ISO/IEC 14496-2 Annex A,
+// whose accuracy requirements are those of IEEE Std 1180-1990).
+//
+// The 2D transform is separable, so it is done as 1D transforms of every row
+// and then of every column. A 1D transform of 8 values is
+//
+//     x[n] = sum over k of  a(k) * X[k] * cos((2n + 1) * k * pi / 16)
+//
+// with a(0) = 1 / (2 * sqrt(2)) and a(k) = 1 / 2 for the others. That makes
+// each pass an orthonormal transform, so the two passes together have the
+// factor of 1/4 of the 2D definition. Each coefficient of the basis matrix
+// below is round(a(k) * cos(...) * 2^14), indexed [n][k].
+//
+// Between the passes a few extra fractional bits are kept, because rounding
+// to whole numbers there would cost too much accuracy to meet IEEE 1180.
+// 64-bit integers are used so that garbage input can't cause overflow panics.
+// ---------------------------------------------------------------------------
+
+const IDCT_BASIS_BITS: u32 = 14;
+const IDCT_EXTRA_BITS: u32 = 5;
+
+const IDCT_BASIS: [[i64; 8]; 8] = [
+    [5793, 8035, 7568, 6811, 5793, 4551, 3135, 1598],
+    [5793, 6811, 3135, -1598, -5793, -8035, -7568, -4551],
+    [5793, 4551, -3135, -8035, -5793, 1598, 7568, 6811],
+    [5793, 1598, -7568, -4551, 5793, 6811, -3135, -8035],
+    [5793, -1598, -7568, 4551, 5793, -6811, -3135, 8035],
+    [5793, -4551, -3135, 8035, -5793, -1598, 7568, -6811],
+    [5793, -6811, 3135, 1598, -5793, 8035, -7568, 4551],
+    [5793, -8035, 7568, -6811, 5793, -4551, 3135, -1598],
+];
+
+/// One 1D inverse transform: multiplies the basis matrix with `input`, then
+/// divides by 2^`shift` with rounding.
+///
+/// The basis matrix is symmetric: output n + 4 uses the same products as
+/// output 3 - n, with the sign flipped for the odd numbered coefficients, and
+/// the same holds inside the even numbered coefficients for 1 - n and n + 2
+/// with the signs of the ones that are 2 mod 4. So each output pair (n, 7 - n)
+/// is the sum and the difference of an even part and an odd part, and the
+/// even part of the pairs (n, 3 - n) is again a sum and a difference. This
+/// gives exactly the same integers as the plain product with 64 multiplications,
+/// with 24 of them (and 8 when the odd coefficients are all zero).
+fn idct_pass(input: [i64; 8], shift: u32) -> [i64; 8] {
+    if input == [0; 8] {
+        return [0; 8];
+    }
+    let half = 1i64 << (shift - 1);
+    let basis = &IDCT_BASIS;
+    let mut even = [0i64; 4];
+    for n in 0..2 {
+        let from_0_and_4 = basis[n][0] * input[0] + basis[n][4] * input[4];
+        let from_2_and_6 = basis[n][2] * input[2] + basis[n][6] * input[6];
+        even[n] = from_0_and_4 + from_2_and_6;
+        even[3 - n] = from_0_and_4 - from_2_and_6;
+    }
+    let mut odd = [0i64; 4];
+    if (input[1] | input[3] | input[5] | input[7]) != 0 {
+        for n in 0..4 {
+            odd[n] = basis[n][1] * input[1]
+                + basis[n][3] * input[3]
+                + basis[n][5] * input[5]
+                + basis[n][7] * input[7];
         }
     }
-    None
+    let mut out = [0i64; 8];
+    for n in 0..4 {
+        out[n] = (even[n] + odd[n] + half) >> shift;
+        out[7 - n] = (even[n] - odd[n] + half) >> shift;
+    }
+    out
 }
 
-// ---------------------------------------------------------------------------
-// Inverse DCT: same arithmetic as the "simple" IDCT in libavcodec, but using
-// 64-bit integers so that garbage input can't cause overflow panics.
-// ---------------------------------------------------------------------------
-
-const W1: i64 = 22725;
-const W2: i64 = 21407;
-const W3: i64 = 19266;
-const W4: i64 = 16383;
-const W5: i64 = 12873;
-const W6: i64 = 8867;
-const W7: i64 = 4520;
-const ROW_SHIFT: u32 = 11;
-const COL_SHIFT: u32 = 20;
-
-fn idct_row(r: &mut [i16]) {
-    if r[1..8].iter().all(|&v| v == 0) {
-        let t = (i32::from(r[0]) * 8) as i16;
-        r[..8].fill(t);
-        return;
+/// The inverse DCT of a block of 64 coefficients (in raster order). The
+/// result is indexed [row][column] and has not been clipped.
+fn idct_8x8(blk: &[i16; 64]) -> [[i64; 8]; 8] {
+    let mut rows = [[0i64; 8]; 8];
+    for (y, row) in rows.iter_mut().enumerate() {
+        let mut coeffs = [0i64; 8];
+        for (k, c) in coeffs.iter_mut().enumerate() {
+            *c = i64::from(blk[y * 8 + k]);
+        }
+        *row = idct_pass(coeffs, IDCT_BASIS_BITS - IDCT_EXTRA_BITS);
     }
-    let mut v = [0i64; 8];
-    for (dst, &src) in v.iter_mut().zip(r.iter()) {
-        *dst = i64::from(src);
+    let mut result = [[0i64; 8]; 8];
+    for x in 0..8 {
+        let mut column = [0i64; 8];
+        for (k, c) in column.iter_mut().enumerate() {
+            *c = rows[k][x];
+        }
+        let values = idct_pass(column, IDCT_BASIS_BITS + IDCT_EXTRA_BITS);
+        for (y, &v) in values.iter().enumerate() {
+            result[y][x] = v;
+        }
     }
-    let mut a0 = W4 * v[0] + (1i64 << (ROW_SHIFT - 1));
-    let mut a1 = a0;
-    let mut a2 = a0;
-    let mut a3 = a0;
-    a0 += W2 * v[2];
-    a1 += W6 * v[2];
-    a2 -= W6 * v[2];
-    a3 -= W2 * v[2];
-    let mut b0 = W1 * v[1] + W3 * v[3];
-    let mut b1 = W3 * v[1] - W7 * v[3];
-    let mut b2 = W5 * v[1] - W1 * v[3];
-    let mut b3 = W7 * v[1] - W5 * v[3];
-    a0 += W4 * v[4] + W6 * v[6];
-    a1 += -W4 * v[4] - W2 * v[6];
-    a2 += -W4 * v[4] + W2 * v[6];
-    a3 += W4 * v[4] - W6 * v[6];
-    b0 += W5 * v[5] + W7 * v[7];
-    b1 += -W1 * v[5] - W5 * v[7];
-    b2 += W7 * v[5] + W3 * v[7];
-    b3 += W3 * v[5] - W1 * v[7];
-    r[0] = ((a0 + b0) >> ROW_SHIFT) as i16;
-    r[7] = ((a0 - b0) >> ROW_SHIFT) as i16;
-    r[1] = ((a1 + b1) >> ROW_SHIFT) as i16;
-    r[6] = ((a1 - b1) >> ROW_SHIFT) as i16;
-    r[2] = ((a2 + b2) >> ROW_SHIFT) as i16;
-    r[5] = ((a2 - b2) >> ROW_SHIFT) as i16;
-    r[3] = ((a3 + b3) >> ROW_SHIFT) as i16;
-    r[4] = ((a3 - b3) >> ROW_SHIFT) as i16;
-}
-
-/// The column pass for column x of a block. Gives the 8 results, which still
-/// have to be clipped.
-fn idct_col(blk: &[i16; 64], x: usize) -> [i64; 8] {
-    let c = |row: usize| i64::from(blk[row * 8 + x]);
-    let mut a0 = W4 * (c(0) + ((1i64 << (COL_SHIFT - 1)) / W4));
-    let mut a1 = a0;
-    let mut a2 = a0;
-    let mut a3 = a0;
-    a0 += W2 * c(2);
-    a1 += W6 * c(2);
-    a2 -= W6 * c(2);
-    a3 -= W2 * c(2);
-    let mut b0 = W1 * c(1) + W3 * c(3);
-    let mut b1 = W3 * c(1) - W7 * c(3);
-    let mut b2 = W5 * c(1) - W1 * c(3);
-    let mut b3 = W7 * c(1) - W5 * c(3);
-    a0 += W4 * c(4);
-    a1 -= W4 * c(4);
-    a2 -= W4 * c(4);
-    a3 += W4 * c(4);
-    b0 += W5 * c(5);
-    b1 -= W1 * c(5);
-    b2 += W7 * c(5);
-    b3 += W3 * c(5);
-    a0 += W6 * c(6);
-    a1 -= W2 * c(6);
-    a2 += W2 * c(6);
-    a3 -= W6 * c(6);
-    b0 += W7 * c(7);
-    b1 -= W5 * c(7);
-    b2 += W3 * c(7);
-    b3 -= W1 * c(7);
-    [
-        (a0 + b0) >> COL_SHIFT,
-        (a1 + b1) >> COL_SHIFT,
-        (a2 + b2) >> COL_SHIFT,
-        (a3 + b3) >> COL_SHIFT,
-        (a3 - b3) >> COL_SHIFT,
-        (a2 - b2) >> COL_SHIFT,
-        (a1 - b1) >> COL_SHIFT,
-        (a0 - b0) >> COL_SHIFT,
-    ]
+    result
 }
 
 /// Do the IDCT of a block and either store the result to or add it to the
 /// 8x8 area starting at `offset` in `dst`.
-fn idct_store(blk: &mut [i16; 64], dst: &mut [u8], offset: usize, stride: usize, add: bool) {
-    for row in 0..8 {
-        idct_row(&mut blk[row * 8..row * 8 + 8]);
-    }
-    for x in 0..8 {
-        let out = idct_col(blk, x);
-        for (y, &o) in out.iter().enumerate() {
+fn idct_store(blk: &[i16; 64], dst: &mut [u8], offset: usize, stride: usize, add: bool) {
+    let result = idct_8x8(blk);
+    for (y, row) in result.iter().enumerate() {
+        for (x, &value) in row.iter().enumerate() {
             let i = offset + y * stride + x;
-            let mut v = o;
+            let mut v = value;
             if add {
                 v += i64::from(dst[i]);
             }
             dst[i] = v.clamp(0, 255) as u8;
         }
+    }
+}
+
+#[cfg(test)]
+mod idct_tests {
+    use super::{idct_8x8, idct_pass, IDCT_BASIS};
+
+    /// Orthonormal 8 point DCT basis in floating point, indexed [n][k].
+    fn basis() -> [[f64; 8]; 8] {
+        let mut c = [[0.0f64; 8]; 8];
+        for n in 0..8 {
+            for k in 0..8 {
+                let a = if k == 0 { 0.5 / 2f64.sqrt() } else { 0.5 };
+                let angle = (2 * n + 1) as f64 * k as f64 * std::f64::consts::PI / 16.0;
+                c[n][k] = a * angle.cos();
+            }
+        }
+        c
+    }
+
+    fn forward(c: &[[f64; 8]; 8], px: &[[f64; 8]; 8]) -> [[f64; 8]; 8] {
+        let mut out = [[0.0f64; 8]; 8];
+        for v in 0..8 {
+            for u in 0..8 {
+                let mut sum = 0.0;
+                for y in 0..8 {
+                    for x in 0..8 {
+                        sum += c[y][v] * px[y][x] * c[x][u];
+                    }
+                }
+                out[v][u] = sum;
+            }
+        }
+        out
+    }
+
+    fn inverse(c: &[[f64; 8]; 8], f: &[[f64; 8]; 8]) -> [[f64; 8]; 8] {
+        let mut out = [[0.0f64; 8]; 8];
+        for y in 0..8 {
+            for x in 0..8 {
+                let mut sum = 0.0;
+                for v in 0..8 {
+                    for u in 0..8 {
+                        sum += c[y][v] * f[v][u] * c[x][u];
+                    }
+                }
+                out[y][x] = sum;
+            }
+        }
+        out
+    }
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// A number from lo to hi, inclusive.
+        fn range(&mut self, lo: i64, hi: i64) -> i64 {
+            lo + (self.next_u64() % (hi - lo + 1) as u64) as i64
+        }
+    }
+
+    /// The accuracy criteria of IEEE Std 1180-1990 for one range of input
+    /// pixel values (-l to h, optionally negated), compared to a double
+    /// precision IDCT. (The random numbers are not the ones of the standard.)
+    fn check_range(l: i64, h: i64, negate: bool) {
+        let c = basis();
+        let mut rng = Rng(0x1180_1180_1180_1180);
+        let blocks = 2000;
+        let mut sum_err = [[0.0f64; 8]; 8];
+        let mut sum_sq = [[0.0f64; 8]; 8];
+        let mut peak = 0.0f64;
+        for _ in 0..blocks {
+            let mut px = [[0.0f64; 8]; 8];
+            for row in px.iter_mut() {
+                for p in row.iter_mut() {
+                    let v = rng.range(-l, h);
+                    *p = (if negate { -v } else { v }) as f64;
+                }
+            }
+            let f = forward(&c, &px);
+            let mut coeffs = [[0.0f64; 8]; 8];
+            let mut blk = [0i16; 64];
+            for v in 0..8 {
+                for u in 0..8 {
+                    let q = (f[v][u] + 0.5).floor().clamp(-2048.0, 2047.0);
+                    coeffs[v][u] = q;
+                    blk[v * 8 + u] = q as i16;
+                }
+            }
+            let expected = inverse(&c, &coeffs);
+            let got = idct_8x8(&blk);
+            for y in 0..8 {
+                for x in 0..8 {
+                    let e = (expected[y][x] + 0.5).floor().clamp(-256.0, 255.0);
+                    let g = got[y][x].clamp(-256, 255) as f64;
+                    let err = g - e;
+                    peak = peak.max(err.abs());
+                    sum_err[y][x] += err;
+                    sum_sq[y][x] += err * err;
+                }
+            }
+        }
+        let n = f64::from(blocks);
+        let mut worst_pixel_mse = 0.0f64;
+        let mut worst_pixel_mean = 0.0f64;
+        let mut total_mse = 0.0;
+        let mut total_mean = 0.0;
+        for y in 0..8 {
+            for x in 0..8 {
+                worst_pixel_mse = worst_pixel_mse.max(sum_sq[y][x] / n);
+                worst_pixel_mean = worst_pixel_mean.max((sum_err[y][x] / n).abs());
+                total_mse += sum_sq[y][x] / n / 64.0;
+                total_mean += sum_err[y][x] / n / 64.0;
+            }
+        }
+        let case = format!("range {}..{}, negated: {}", -l, h, negate);
+        assert!(peak <= 1.0, "peak error {} ({})", peak, case);
+        assert!(worst_pixel_mse <= 0.06, "pixel MSE {} ({})", worst_pixel_mse, case);
+        assert!(total_mse <= 0.02, "overall MSE {} ({})", total_mse, case);
+        assert!(worst_pixel_mean <= 0.015, "pixel mean {} ({})", worst_pixel_mean, case);
+        assert!(total_mean.abs() <= 0.0015, "overall mean {} ({})", total_mean, case);
+    }
+
+    #[test]
+    fn meets_the_ieee_1180_accuracy_criteria() {
+        for (l, h) in [(256, 255), (5, 5), (300, 300)] {
+            check_range(l, h, false);
+            check_range(l, h, true);
+        }
+    }
+
+    /// The pass uses the symmetry of the basis matrix; it has to give the same
+    /// numbers as the plain product, also for the extremes and for rows that
+    /// are mostly zero, like those of real blocks.
+    #[test]
+    fn pass_equals_the_plain_matrix_product() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        for i in 0..20000 {
+            let mut input = [0i64; 8];
+            for v in input.iter_mut() {
+                *v = match i % 3 {
+                    0 => rng.range(-32768, 32767),
+                    1 => [-32768, 0, 32767][rng.range(0, 2) as usize],
+                    _ if rng.range(0, 3) == 0 => rng.range(-2048, 2047),
+                    _ => 0,
+                };
+            }
+            for shift in [9u32, 19] {
+                let half = 1i64 << (shift - 1);
+                let mut expected = [0i64; 8];
+                for n in 0..8 {
+                    let sum: i64 = (0..8).map(|k| IDCT_BASIS[n][k] * input[k]).sum();
+                    expected[n] = (sum + half) >> shift;
+                }
+                assert_eq!(idct_pass(input, shift), expected, "{:?}", input);
+            }
+        }
+    }
+
+    #[test]
+    fn all_zero_input_gives_all_zero_output() {
+        assert_eq!(idct_8x8(&[0; 64]), [[0; 8]; 8]);
     }
 }
 
@@ -300,17 +463,76 @@ fn c_dc_scale(q: i32) -> i32 {
     }
 }
 
+/// Inverse quantization of a non-zero coefficient level with quantizer `q`
+/// (the H.263 style method, used when no quantization matrices are):
+/// magnitude = q * (2 * |level| + 1), minus 1 if q is even, with the sign of
+/// the level, limited to the range of 12 bit coefficients.
+fn dequantize(level: i32, q: i32) -> i32 {
+    let mut magnitude = q * (2 * level.abs() + 1);
+    if q % 2 == 0 {
+        magnitude -= 1;
+    }
+    let value = if level < 0 { -magnitude } else { magnitude };
+    value.clamp(-2048, 2047)
+}
+
+/// The largest level of the entries of a run/level code table that have the
+/// given last flag and run (0 if there are none). An escape sequence of the
+/// first kind codes a level as the difference to this.
+fn largest_level(entries: &[Tcoef], last: bool, run: u8) -> i32 {
+    entries
+        .iter()
+        .filter(|e| e.last == last && e.run == run)
+        .map(|e| i32::from(e.level))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The largest run of the entries of a run/level code table that have the
+/// given last flag and level (0 if there are none). An escape sequence of the
+/// second kind codes a run as the difference to this, minus one.
+fn largest_run(entries: &[Tcoef], last: bool, level: u8) -> i32 {
+    entries
+        .iter()
+        .filter(|e| e.last == last && e.level == level)
+        .map(|e| i32::from(e.run))
+        .max()
+        .unwrap_or(0)
+}
+
 fn median3(a: i32, b: i32, c: i32) -> i32 {
     let mx = a.max(b);
     let mn = a.min(b);
     c.min(mx).max(mn)
 }
 
-/// How the four luma vectors of a macroblock are combined into the chroma
-/// vector (in half pixel units), as specified for H.263 style prediction.
-fn round_chroma(x: i32) -> i32 {
-    const ROUND: [i32; 16] = [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2];
-    ROUND[(x & 15) as usize] + ((x >> 3) & !1)
+/// Gives the chroma motion vector (in half pixel units) for a macroblock
+/// with four luma vectors, from the sum of the luma vectors (in half pixel
+/// units of the luma plane). The average of the four, scaled down for the
+/// half size chroma planes, is sum / 8 half pixels. Its fraction is rounded
+/// to a whole or half pixel: the sixteenths 0 to 2 become a whole pixel
+/// down, 3 to 13 a half pixel, and 14 and 15 a whole pixel up.
+fn round_chroma(sum: i32) -> i32 {
+    let whole_pixels = sum.div_euclid(16);
+    let half_pixels = match sum.rem_euclid(16) {
+        0..=2 => 0,
+        3..=13 => 1,
+        _ => 2,
+    };
+    whole_pixels * 2 + half_pixels
+}
+
+/// Gives one component of the chroma motion vector (in half pixel units) for
+/// a macroblock with a single luma vector (in half pixel units of the luma
+/// plane). The chroma planes are half the size, so the vector is halved. If
+/// that leaves a quarter pixel fraction, the result is the half pixel
+/// position within the same whole pixel.
+fn chroma_vector_component(luma: i32) -> i32 {
+    if luma % 2 == 0 {
+        luma / 2
+    } else {
+        luma.div_euclid(4) * 2 + 1
+    }
 }
 
 /// A decoded picture, in planar YUV 4:2:0.
@@ -421,9 +643,6 @@ pub struct Decoder {
     v_cbpy: Vlc,
     v_mcbpc_i: Vlc,
     v_mcbpc_p: Vlc,
-    // Indexed by intra flag, last flag, then run or level respectively.
-    max_level: [[[i32; 64]; 2]; 2],
-    max_run: [[[i32; 64]; 2]; 2],
 }
 
 impl Default for Decoder {
@@ -434,23 +653,6 @@ impl Default for Decoder {
 
 impl Decoder {
     pub fn new() -> Decoder {
-        let mut max_level = [[[0i32; 64]; 2]; 2];
-        let mut max_run = [[[0i32; 64]; 2]; 2];
-        for intra in 0..2 {
-            let (level, run, last_start) = if intra == 1 {
-                (&TCOEF_INTRA_LEVEL, &TCOEF_INTRA_RUN, TCOEF_INTRA_LAST_START)
-            } else {
-                (&TCOEF_INTER_LEVEL, &TCOEF_INTER_RUN, TCOEF_INTER_LAST_START)
-            };
-            for i in 0..102 {
-                let last = usize::from(i >= last_start);
-                let (l, r) = (i32::from(level[i]), i32::from(run[i]));
-                let ml = &mut max_level[intra][last][r as usize];
-                *ml = (*ml).max(l);
-                let mr = &mut max_run[intra][last][l as usize];
-                *mr = (*mr).max(r);
-            }
-        }
         Decoder {
             width: 0,
             height: 0,
@@ -477,16 +679,14 @@ impl Decoder {
             acv: [Vec::new(), Vec::new(), Vec::new()],
             bw: [0; 3],
             bh: [0; 3],
-            v_inter: Vlc::from16(12, &TCOEF_INTER_VLC),
-            v_intra: Vlc::from16(12, &TCOEF_INTRA_VLC),
+            v_inter: Vlc::from_tcoef(12, &TCOEF_INTER),
+            v_intra: Vlc::from_tcoef(12, &TCOEF_INTRA),
             v_mv: Vlc::from8(12, &MV_VLC),
             v_dcl: Vlc::from8(12, &DC_LUM_VLC),
             v_dcc: Vlc::from8(12, &DC_CHROM_VLC),
             v_cbpy: Vlc::from8(6, &CBPY_VLC),
             v_mcbpc_i: Vlc::from8(9, &MCBPC_INTRA_VLC),
             v_mcbpc_p: Vlc::from8(9, &MCBPC_INTER_VLC),
-            max_level,
-            max_run,
         }
     }
 
@@ -757,34 +957,43 @@ impl Decoder {
     }
 
     /// Predict the motion vector of block n (in 0 to 3) of a macroblock.
+    ///
+    /// The prediction is the median of the vectors of three neighboring
+    /// blocks, each given as the offset of a macroblock and the block within
+    /// it (blocks are numbered in raster order within a macroblock): the
+    /// block to the left, the one above, and the one above and to the right.
+    /// A neighbor outside the picture or the current video packet counts as
+    /// the zero vector, except that if it is the only one that is there, its
+    /// vector is used as is.
     fn pred_mv(&self, mbx: usize, mby: usize, n: usize) -> (i32, i32) {
-        const OFFC: [i32; 4] = [2, 1, 1, -1];
-        let bw = (self.mb_w * 2) as i32;
-        let bx = (mbx * 2 + (n & 1)) as i32;
-        let by = (mby * 2 + (n >> 1)) as i32;
-        let pos = [(bx - 1, by), (bx, by - 1), (bx + OFFC[n], by - 1)];
-        let mut vals = [(0i32, 0i32); 3];
-        let mut count = 0;
-        let mut last = 0;
-        for (k, &(x, y)) in pos.iter().enumerate() {
-            let avail = x >= 0
-                && y >= 0
-                && x < bw
-                && y < (self.mb_h * 2) as i32
-                && self.mb_avail(x >> 1, y >> 1);
-            if avail {
-                let i = (y as usize * bw as usize + x as usize) * 2;
-                vals[k] = (i32::from(self.mvs[i]), i32::from(self.mvs[i + 1]));
-                count += 1;
-                last = k;
+        const NEIGHBORS: [[(i32, i32, usize); 3]; 4] = [
+            [(-1, 0, 1), (0, -1, 2), (1, -1, 2)],
+            [(0, 0, 0), (0, -1, 3), (1, -1, 2)],
+            [(-1, 0, 3), (0, 0, 0), (0, 0, 1)],
+            [(0, 0, 2), (0, 0, 1), (0, 0, 0)],
+        ];
+        let blocks_per_row = self.mb_w * 2;
+        let mut vectors = [(0i32, 0i32); 3];
+        let mut present = 0;
+        let mut only_one = (0, 0);
+        for (slot, &(dx, dy, block)) in NEIGHBORS[n].iter().enumerate() {
+            let (nx, ny) = (mbx as i32 + dx, mby as i32 + dy);
+            if !self.mb_avail(nx, ny) {
+                continue;
             }
+            let row = ny as usize * 2 + (block >> 1);
+            let col = nx as usize * 2 + (block & 1);
+            let i = (row * blocks_per_row + col) * 2;
+            vectors[slot] = (i32::from(self.mvs[i]), i32::from(self.mvs[i + 1]));
+            only_one = vectors[slot];
+            present += 1;
         }
-        if count == 1 {
-            return vals[last];
+        if present == 1 {
+            return only_one;
         }
         (
-            median3(vals[0].0, vals[1].0, vals[2].0),
-            median3(vals[0].1, vals[1].1, vals[2].1),
+            median3(vectors[0].0, vectors[1].0, vectors[2].0),
+            median3(vectors[0].1, vectors[1].1, vectors[2].1),
         )
     }
 
@@ -931,56 +1140,42 @@ impl Decoder {
             }
         }
         if coded {
-            let (vlc, levels, runs, last_start) = if intra {
-                (
-                    &self.v_intra,
-                    &TCOEF_INTRA_LEVEL,
-                    &TCOEF_INTRA_RUN,
-                    TCOEF_INTRA_LAST_START,
-                )
-            } else {
-                (
-                    &self.v_inter,
-                    &TCOEF_INTER_LEVEL,
-                    &TCOEF_INTER_RUN,
-                    TCOEF_INTER_LAST_START,
-                )
-            };
-            let ii = usize::from(intra);
-            let qmul = qscale * 2;
-            let qadd = (qscale - 1) | 1;
+            let entries: &[Tcoef] = if intra { &TCOEF_INTRA } else { &TCOEF_INTER };
+            let vlc = if intra { &self.v_intra } else { &self.v_inter };
+            let escape = entries.len();
             loop {
                 let idx = match vlc.get(b) {
                     Some(i) => i,
                     None => invalid!("bad coefficient code"),
                 };
-                let (last, run, level) = if idx == 102 {
+                let (last, run, level) = if idx == escape {
                     // Escape code, followed by one of three kinds of data.
                     if !b.get1() {
                         // The level is the table's level plus the largest
                         // level possible for this run.
-                        let i = match vlc.get(b) {
-                            Some(i) if i != 102 => i,
+                        let entry = match vlc.get(b) {
+                            Some(i) if i != escape => &entries[i],
                             _ => invalid!("bad escape code"),
                         };
-                        let last = i >= last_start;
-                        let run = i32::from(runs[i]);
-                        let level = i32::from(levels[i])
-                            + self.max_level[ii][usize::from(last)][run as usize];
-                        (last, run, if b.get1() { -level } else { level })
+                        let level = i32::from(entry.level)
+                            + largest_level(entries, entry.last, entry.run);
+                        (
+                            entry.last,
+                            i32::from(entry.run),
+                            if b.get1() { -level } else { level },
+                        )
                     } else if !b.get1() {
                         // The run is the table's run plus the largest run
                         // possible for this level, plus one.
-                        let i = match vlc.get(b) {
-                            Some(i) if i != 102 => i,
+                        let entry = match vlc.get(b) {
+                            Some(i) if i != escape => &entries[i],
                             _ => invalid!("bad escape code"),
                         };
-                        let last = i >= last_start;
-                        let level = i32::from(levels[i]);
-                        let run = i32::from(runs[i])
-                            + self.max_run[ii][usize::from(last)][level as usize]
+                        let level = i32::from(entry.level);
+                        let run = i32::from(entry.run)
+                            + largest_run(entries, entry.last, entry.level)
                             + 1;
-                        (last, run, if b.get1() { -level } else { level })
+                        (entry.last, run, if b.get1() { -level } else { level })
                     } else {
                         // Fixed length: last, run and level.
                         let last = b.get1();
@@ -997,10 +1192,11 @@ impl Decoder {
                         (last, run, level)
                     }
                 } else {
-                    let level = i32::from(levels[idx]);
+                    let entry = &entries[idx];
+                    let level = i32::from(entry.level);
                     (
-                        idx >= last_start,
-                        i32::from(runs[idx]),
+                        entry.last,
+                        i32::from(entry.run),
                         if b.get1() { -level } else { level },
                     )
                 };
@@ -1013,12 +1209,7 @@ impl Decoder {
                     blk[j] = level as i16;
                 } else {
                     // Inter blocks are dequantized right away.
-                    let v = if level > 0 {
-                        level * qmul + qadd
-                    } else {
-                        level * qmul - qadd
-                    };
-                    blk[j] = v.clamp(-2048, 2047) as i16;
+                    blk[j] = dequantize(level, qscale) as i16;
                 }
                 if last {
                     break;
@@ -1059,14 +1250,11 @@ impl Decoder {
                 self.acv[plane][bi * 16 + 8 + i] = blk[i];
             }
             // Dequantize.
-            let qmul = qscale * 2;
-            let qadd = (qscale - 1) | 1;
             blk[0] = (i32::from(blk[0]) * dcscale) as i16;
             for v in blk.iter_mut().skip(1) {
                 let l = i32::from(*v);
                 if l != 0 {
-                    let x = if l > 0 { l * qmul + qadd } else { l * qmul - qadd };
-                    *v = x.clamp(-2048, 2047) as i16;
+                    *v = dequantize(l, qscale) as i16;
                 }
             }
         }
@@ -1185,7 +1373,7 @@ impl Decoder {
                 } else {
                     mby * 8 * stride + mbx * 8
                 };
-                idct_store(&mut blk, &mut self.cur[p], offset, stride, !intra);
+                idct_store(&blk, &mut self.cur[p], offset, stride, !intra);
             }
         }
         Ok(())
@@ -1212,8 +1400,8 @@ impl Decoder {
             };
             self.set_mvs(mbx, mby, [(mx, my); 4]);
             self.mc_block(0, mbx * 16, mby * 16, mx, my, 16);
-            let cx = (mx >> 1) | (mx & 1);
-            let cy = (my >> 1) | (my & 1);
+            let cx = chroma_vector_component(mx);
+            let cy = chroma_vector_component(my);
             self.mc_block(1, mbx * 8, mby * 8, cx, cy, 8);
             self.mc_block(2, mbx * 8, mby * 8, cx, cy, 8);
         } else {
@@ -1248,5 +1436,108 @@ impl Decoder {
             self.mc_block(2, mbx * 8, mby * 8, cx, cy, 8);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod helper_tests {
+    use super::*;
+
+    #[test]
+    fn chroma_vector_of_a_single_luma_vector() {
+        let cases = [
+            (0, 0),
+            (1, 1),
+            (2, 1),
+            (3, 1),
+            (4, 2),
+            (5, 3),
+            (-1, -1),
+            (-2, -1),
+            (-3, -1),
+            (-4, -2),
+            (-5, -3),
+        ];
+        for (luma, chroma) in cases {
+            assert_eq!(chroma_vector_component(luma), chroma, "luma {}", luma);
+        }
+    }
+
+    #[test]
+    fn chroma_vector_of_four_luma_vectors() {
+        let cases = [
+            (0, 0),
+            (2, 0),
+            (3, 1),
+            (13, 1),
+            (14, 2),
+            (15, 2),
+            (16, 2),
+            (19, 3),
+            (-1, 0),
+            (-3, -1),
+            (-16, -2),
+        ];
+        for (sum, chroma) in cases {
+            assert_eq!(round_chroma(sum), chroma, "sum {}", sum);
+        }
+    }
+
+    #[test]
+    fn dequantization() {
+        assert_eq!(dequantize(1, 1), 3);
+        assert_eq!(dequantize(1, 2), 5);
+        assert_eq!(dequantize(-1, 2), -5);
+        assert_eq!(dequantize(-3, 5), -35);
+        assert_eq!(dequantize(2000, 31), 2047);
+        assert_eq!(dequantize(-2000, 31), -2048);
+    }
+
+    #[test]
+    fn escape_limits_of_the_run_level_tables() {
+        assert_eq!(largest_level(&TCOEF_INTER, false, 0), 12);
+        assert_eq!(largest_level(&TCOEF_INTER, true, 0), 3);
+        assert_eq!(largest_run(&TCOEF_INTER, false, 1), 26);
+        assert_eq!(largest_run(&TCOEF_INTER, true, 1), 40);
+        assert_eq!(largest_level(&TCOEF_INTRA, false, 0), 27);
+        assert_eq!(largest_level(&TCOEF_INTRA, true, 0), 8);
+        assert_eq!(largest_run(&TCOEF_INTRA, false, 1), 14);
+        assert_eq!(largest_run(&TCOEF_INTRA, true, 1), 20);
+        // Nothing in the tables has this run or level.
+        assert_eq!(largest_level(&TCOEF_INTER, false, 63), 0);
+        assert_eq!(largest_run(&TCOEF_INTER, false, 63), 0);
+    }
+
+    #[test]
+    fn run_level_tables_are_consistent() {
+        for (entries, first_last) in [(&TCOEF_INTER, 58), (&TCOEF_INTRA, 67)] {
+            for (i, e) in entries.iter().enumerate() {
+                assert_eq!(e.last, i >= first_last, "entry {}", i);
+                assert!(e.level > 0 && e.len > 0 && e.len <= 12);
+            }
+            // No code is the start of another (including the escape code).
+            let mut codes: Vec<(u32, u32)> = entries
+                .iter()
+                .map(|e| (u32::from(e.code), u32::from(e.len)))
+                .collect();
+            codes.push((u32::from(TCOEF_ESCAPE.0), u32::from(TCOEF_ESCAPE.1)));
+            for (i, &(code_a, len_a)) in codes.iter().enumerate() {
+                for (j, &(code_b, len_b)) in codes.iter().enumerate() {
+                    if i != j && len_a <= len_b {
+                        assert_ne!(code_b >> (len_b - len_a), code_a, "{} and {}", i, j);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn finds_start_codes() {
+        let data = [5, 0, 0, 2, 0, 0, 0, 1, 9, 0, 0, 1];
+        assert_eq!(find_start_code(&data, 0), Some(5));
+        assert_eq!(find_start_code(&data, 6), Some(9));
+        assert_eq!(find_start_code(&data, 10), None);
+        assert_eq!(find_start_code(&data, 100), None);
+        assert_eq!(find_start_code(&[], 0), None);
     }
 }
