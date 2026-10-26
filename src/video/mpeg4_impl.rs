@@ -189,14 +189,15 @@ const IDCT_BASIS: [[i64; 8]; 8] = [
 /// One 1D inverse transform: multiplies the basis matrix with `input`, then
 /// divides by 2^`shift` with rounding.
 ///
-/// The basis matrix is symmetric: output n + 4 uses the same products as
-/// output 3 - n, with the sign flipped for the odd numbered coefficients, and
-/// the same holds inside the even numbered coefficients for 1 - n and n + 2
-/// with the signs of the ones that are 2 mod 4. So each output pair (n, 7 - n)
-/// is the sum and the difference of an even part and an odd part, and the
-/// even part of the pairs (n, 3 - n) is again a sum and a difference. This
-/// gives exactly the same integers as the plain product with 64 multiplications,
-/// with 24 of them (and 8 when the odd coefficients are all zero).
+/// The basis matrix is symmetric: row 7 - n is row n with the signs of the
+/// entries in the odd numbered columns flipped. So the outputs n and 7 - n
+/// (for n from 0 to 3) are the sum and the difference of two parts: the one
+/// from the even numbered coefficients and the one from the odd numbered
+/// ones. The even part has a symmetry of its own (row 3 - n is row n with the
+/// signs of the columns 2 and 6 flipped), so it too is computed as a sum and
+/// a difference. This gives exactly the same integers as the plain product,
+/// with 24 multiplications instead of 64 (8 if the odd numbered coefficients
+/// are all zero).
 fn idct_pass(input: [i64; 8], shift: u32) -> [i64; 8] {
     if input == [0; 8] {
         return [0; 8];
@@ -228,7 +229,7 @@ fn idct_pass(input: [i64; 8], shift: u32) -> [i64; 8] {
 }
 
 /// The inverse DCT of a block of 64 coefficients (in raster order). The
-/// result is indexed [row][column] and has not been clipped.
+/// result is indexed `[row][column]` and has not been clipped.
 fn idct_8x8(blk: &[i16; 64]) -> [[i64; 8]; 8] {
     let mut rows = [[0i64; 8]; 8];
     for (y, row) in rows.iter_mut().enumerate() {
@@ -272,7 +273,7 @@ fn idct_store(blk: &[i16; 64], dst: &mut [u8], offset: usize, stride: usize, add
 mod idct_tests {
     use super::{idct_8x8, idct_pass, IDCT_BASIS};
 
-    /// Orthonormal 8 point DCT basis in floating point, indexed [n][k].
+    /// Orthonormal 8 point DCT basis in floating point, indexed `[n][k]`.
     fn basis() -> [[f64; 8]; 8] {
         let mut c = [[0.0f64; 8]; 8];
         for n in 0..8 {
