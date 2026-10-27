@@ -304,6 +304,37 @@ impl ObjC {
         }
     }
 
+    /// Like [Self::class_overrides_method_of_superclass], but only returns
+    /// true if the most-derived implementation of the method is guest code
+    /// (i.e. the app's own), rather than one of touchHLE's host implementations
+    /// of a framework class.
+    pub fn class_overrides_method_of_superclass_in_guest_code(
+        &self,
+        class: Class,
+        sel: SEL,
+        superclass: Class,
+    ) -> bool {
+        let mut class = class;
+        loop {
+            if class == superclass {
+                return false;
+            }
+
+            let &ClassHostObject {
+                superclass,
+                ref methods,
+                ..
+            } = self.borrow(class);
+            if let Some(imp) = methods.get(&sel) {
+                return matches!(imp, IMP::Guest(_));
+            } else if superclass == nil {
+                panic!();
+            } else {
+                class = superclass;
+            }
+        }
+    }
+
     pub fn debug_all_class_selectors_as_strings(&self, mem: &Mem, class: Class) -> Vec<String> {
         let mut class = class;
         let mut selector_strings = Vec::new();

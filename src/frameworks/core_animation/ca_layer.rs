@@ -452,6 +452,13 @@ pub const CLASSES: ClassExports = objc_classes! {
     let int_width = size.width.round() as GuestUSize;
     let int_height = size.height.round() as GuestUSize;
 
+    // There is nothing to draw into yet, so stay pending until the layer has
+    // a size, like real iOS does for a view with an empty frame.
+    if int_width == 0 || int_height == 0 {
+        env.objc.borrow_mut::<CALayerHostObject>(this).needs_display = true;
+        return;
+    }
+
     let need_new_context = cg_context.is_none_or(|existing|
             CGBitmapContextGetWidth(env, existing) != int_width ||
             CGBitmapContextGetHeight(env, existing) != int_height

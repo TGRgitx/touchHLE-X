@@ -148,6 +148,28 @@ fn init_common(env: &mut Environment, this: id) -> id {
 
     env.framework_state.uikit.ui_view.views.push(this);
 
+    // On real iOS, a view whose class implements drawRect: gets drawn the
+    // first time it is shown, without the app having to call setNeedsDisplay.
+    // Do the same for views with custom drawing implemented by the app. (Views
+    // implemented by touchHLE itself already manage their own redrawing.)
+    // Layers that are hidden or have no size yet stay pending until they can
+    // actually be drawn.
+    let this_class = ObjC::read_isa(this, &env.mem);
+    let ui_view_class = env.objc.get_known_class("UIView", &mut env.mem);
+    let draw_layer_sel = env.objc.lookup_selector("drawLayer:inContext:").unwrap();
+    let draw_rect_sel = env.objc.lookup_selector("drawRect:").unwrap();
+    if env.objc.class_overrides_method_of_superclass_in_guest_code(
+        this_class,
+        draw_rect_sel,
+        ui_view_class,
+    ) || env.objc.class_overrides_method_of_superclass_in_guest_code(
+        this_class,
+        draw_layer_sel,
+        ui_view_class,
+    ) {
+        () = msg![env; layer setNeedsDisplay];
+    }
+
     this
 }
 
