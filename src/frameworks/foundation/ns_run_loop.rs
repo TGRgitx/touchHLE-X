@@ -17,7 +17,7 @@ use crate::frameworks::core_animation::ca_transaction;
 use crate::frameworks::core_foundation::cf_run_loop::{
     kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoopRef,
 };
-use crate::frameworks::{core_animation, media_player, uikit};
+use crate::frameworks::{core_animation, media_player, system_configuration, uikit};
 use crate::libc::semaphore::{host_create_semaphore, sem_post, sem_t};
 use crate::mem::MutPtr;
 use crate::objc::{
@@ -450,6 +450,7 @@ pub fn run_run_loop(
 
         if is_main_run_loop {
             media_player::handle_players(env);
+            system_configuration::handle_run_loop(env);
         }
 
         // Unfortunately, touchHLE has to poll for certain things repeatedly;
