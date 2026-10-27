@@ -21,13 +21,19 @@ pub fn get_log_file() -> &'static File {
     &LOG_FILE
 }
 
+/// Diagnostic only: milliseconds since the first log message was printed.
+pub fn elapsed_ms() -> u128 {
+    static START: LazyLock<std::time::Instant> = LazyLock::new(std::time::Instant::now);
+    START.elapsed().as_millis()
+}
+
 /// Prints a log message unconditionally. Use this for errors or warnings.
 ///
 /// The message is prefixed with the module path, so it is clear where it comes
 /// from.
 macro_rules! log {
     ($($arg:tt)+) => {
-        echo!("{}: {}", module_path!(), format_args!($($arg)+));
+        echo!("[+{}ms] {}: {}", $crate::log::elapsed_ms(), module_path!(), format_args!($($arg)+));
     }
 }
 

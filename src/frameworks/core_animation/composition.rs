@@ -32,6 +32,60 @@ pub(super) struct State {
     recomposite_next: Option<Instant>,
     fps_counter: Option<FpsCounter>,
     misc_gl_objects: Option<MiscGlObjects>,
+    /// Diagnostic only: how many times the layer tree has been dumped, and how
+    /// many times the compositor has been called since the last dump.
+    debug_dumps_done: u32,
+    debug_calls_since_dump: u32,
+}
+
+/// Diagnostic only: log the layer tree under `layer`.
+fn debug_dump_layer_tree(env: &mut Environment, layer: id, depth: usize) {
+    let (bounds, position, hidden, opacity, transform, bg, has_contents, has_pixels, sublayers) = {
+        let h = env.objc.borrow::<CALayerHostObject>(layer);
+        (
+            h.bounds,
+            h.position,
+            h.hidden,
+            h.opacity,
+            h.affine_transform,
+            h.background_color
+                .as_ref()
+                .map(|c| (c.r, c.g, c.b, c.a)),
+            h.contents != nil,
+            h.presented_pixels.is_some(),
+            h.sublayers.clone(),
+        )
+    };
+    let delegate: id = msg![env; layer delegate];
+    let name = if delegate != nil {
+        let class = ObjC::read_isa(delegate, &env.mem);
+        env.objc
+            .try_get_class_name(class)
+            .unwrap_or("?")
+            .to_string()
+    } else {
+        "(no delegate)".to_string()
+    };
+    log!(
+        "[layer dump] {:indent$}{:?} {} bounds={:?} pos={:?} hidden={} opacity={} transform={:?} bg(rgba)={:?} has_contents={} has_eagl_pixels={}",
+        "",
+        layer,
+        name,
+        bounds,
+        position,
+        hidden,
+        opacity,
+        transform,
+        bg,
+        has_contents,
+        has_pixels,
+        indent = depth * 2
+    );
+    if depth < 8 {
+        for sublayer in sublayers {
+            debug_dump_layer_tree(env, sublayer, depth + 1);
+        }
+    }
 }
 
 struct MiscGlObjects {
@@ -68,6 +122,30 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
     if !windows.iter().any(|&window| !msg![env; window isHidden]) {
         log_dbg!("No visible windows, skipping composition");
         return None;
+    }
+
+    // Diagnostic only: dump the layer tree about every 2 seconds, 25 times.
+    {
+        let state = &mut env.framework_state.core_animation.composition;
+        state.debug_calls_since_dump += 1;
+        if state.debug_dumps_done < 25 && state.debug_calls_since_dump >= 120 {
+            state.debug_calls_since_dump = 0;
+            state.debug_dumps_done += 1;
+            let n = state.debug_dumps_done;
+            let fast_path = find_fullscreen_eagl_layer(env) != nil;
+            log!(
+                "[layer dump] #{}: {} windows, CAEAGLLayer fast path: {}",
+                n,
+                windows.len(),
+                fast_path
+            );
+            for &window in &windows {
+                let hidden: bool = msg![env; window isHidden];
+                log!("[layer dump] window {:?} hidden={}", window, hidden);
+                let layer: id = msg![env; window layer];
+                debug_dump_layer_tree(env, layer, 1);
+            }
+        }
     }
 
     if find_fullscreen_eagl_layer(env) != nil {
