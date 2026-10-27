@@ -10,7 +10,7 @@ use crate::dyld::{export_c_func, FunctionExports};
 use crate::frameworks::core_foundation::cf_allocator::{kCFAllocatorDefault, CFAllocatorRef};
 use crate::frameworks::core_foundation::CFTypeRef;
 use crate::libc::sys::socket::sockaddr;
-use crate::mem::{ConstPtr, MutPtr, MutVoidPtr, Ptr};
+use crate::mem::{ConstPtr, MutPtr, MutVoidPtr};
 use crate::objc::{msg, objc_classes, Class, ClassExports, HostObject};
 use crate::Environment;
 use std::net::SocketAddrV4;
@@ -45,15 +45,6 @@ fn SCNetworkReachabilityCreateWithName(
     name: ConstPtr<u8>,
 ) -> SCNetworkReachabilityRef {
     assert!(allocator == kCFAllocatorDefault || env.mem.read(allocator).is_system_default()); // unimplemented
-    if env
-        .bundle
-        .bundle_identifier()
-        .starts_with("com.chillingo.cuttherope")
-        && env.mem.cstr_at_utf8(name).unwrap() == "chillingo-crystal.appspot.com"
-    {
-        log!("Applying game-specific hack for Cut the Rope: SCNetworkReachabilityCreateWithName(\"chillingo-crystal.appspot.com\") returns NULL");
-        return Ptr::null();
-    }
     let isa = env
         .objc
         .get_known_class("_touchHLE_SCNetworkReachability", &mut env.mem);
