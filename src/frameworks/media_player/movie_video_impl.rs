@@ -221,7 +221,10 @@ fn step_video(env: &mut Environment, player: id) {
         }
         if decoded_any {
             if !video.shown_any {
-                log!("Showing the first frame of the movie (sample {})", video.next_sample);
+                log!(
+                    "Showing the first frame of the movie (sample {})",
+                    video.next_sample
+                );
             }
             show_frame(env, &video);
             video.shown_any = true;

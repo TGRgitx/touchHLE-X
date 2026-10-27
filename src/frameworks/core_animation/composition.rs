@@ -48,9 +48,7 @@ fn debug_dump_layer_tree(env: &mut Environment, layer: id, depth: usize) {
             h.hidden,
             h.opacity,
             h.affine_transform,
-            h.background_color
-                .as_ref()
-                .map(|c| (c.r, c.g, c.b, c.a)),
+            h.background_color.as_ref().map(|c| (c.r, c.g, c.b, c.a)),
             h.contents != nil,
             h.presented_pixels.is_some(),
             h.sublayers.clone(),
