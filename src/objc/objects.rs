@@ -245,7 +245,12 @@ impl super::ObjC {
         let mut host_object: &(dyn AnyHostObject + 'static) = &*self
             .objects
             .get(&object)
-            .unwrap_or_else(|| panic!("No object {object:?} (already freed?)"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "No object {object:?} (already freed?). Host methods being run (innermost first):{}",
+                    Self::describe_host_call_stack(&self.host_call_stack, &self.selectors)
+                )
+            })
             .host_object;
         loop {
             if let Some(res) = host_object.as_any().downcast_ref() {
@@ -272,7 +277,12 @@ impl super::ObjC {
         let mut host_object: &mut Aho = &mut *self
             .objects
             .get_mut(&object)
-            .unwrap_or_else(|| panic!("No object {object:?} (already freed?)"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "No object {object:?} (already freed?). Host methods being run (innermost first):{}",
+                    Self::describe_host_call_stack(&self.host_call_stack, &self.selectors)
+                )
+            })
             .host_object;
         loop {
             if let Some(res) = unsafe { &mut *(host_object as *mut Aho) }

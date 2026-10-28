@@ -274,7 +274,9 @@ Type mismatch when sending message {} to {:?}!
                                 }
                             }
                         }
-                        host_imp.call_from_guest(env)
+                        env.objc.host_call_stack.push((receiver, selector));
+                        host_imp.call_from_guest(env);
+                        env.objc.host_call_stack.pop();
                     }
                     // We can't create a new stack frame, because that would
                     // interfere with pass-through of stack arguments.

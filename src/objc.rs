@@ -88,6 +88,11 @@ pub struct ObjC {
     /// Type information isn't part of the `objc_msgSend` ABI, so an alternative
     /// channel is needed.
     message_type_info: Option<(std::any::TypeId, &'static str)>,
+
+    /// Receiver and selector of the host-implemented methods that are
+    /// currently running (innermost last). Only used to make panic messages
+    /// more informative, e.g. when a host method is handed an unexpected nil.
+    host_call_stack: Vec<(id, SEL)>,
 }
 
 impl ObjC {
@@ -99,7 +104,31 @@ impl ObjC {
             sync_mutexes: HashMap::new(),
             initializer_threads: HashMap::new(),
             message_type_info: None,
+            host_call_stack: Vec::new(),
         }
+    }
+
+    /// Describe the host methods that are currently running, innermost first,
+    /// for use in panic messages. This takes the fields it needs rather than
+    /// `&self` so it can be used in closures where `self` is partially
+    /// borrowed.
+    fn describe_host_call_stack(
+        host_call_stack: &[(id, SEL)],
+        selectors: &HashMap<String, SEL>,
+    ) -> String {
+        let mut out = String::new();
+        for &(receiver, selector) in host_call_stack.iter().rev().take(8) {
+            let name = selectors
+                .iter()
+                .find(|(_, &sel)| sel == selector)
+                .map(|(name, _)| name.as_str())
+                .unwrap_or("?");
+            out.push_str(&format!("\n  - [{receiver:?} {name}]"));
+        }
+        if out.is_empty() {
+            out.push_str(" (none)");
+        }
+        out
     }
 }
 
