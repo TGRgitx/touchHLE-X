@@ -24,6 +24,8 @@ use crate::matrix::Matrix;
 use crate::mem::SafeWrite;
 use crate::objc::{id, msg, msg_class, nil, ObjC};
 use crate::Environment;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -32,6 +34,12 @@ pub(super) struct State {
     recomposite_next: Option<Instant>,
     fps_counter: Option<FpsCounter>,
     misc_gl_objects: Option<MiscGlObjects>,
+    /// Fingerprint of the last frame that was actually drawn, used to skip
+    /// composition when nothing has changed (see [frame_signature]).
+    last_frame_signature: Option<u64>,
+    /// How many consecutive compositor ticks have been skipped because nothing
+    /// changed.
+    ticks_skipped: u32,
     /// Diagnostic only: how many times the layer tree has been dumped, and how
     /// many times the compositor has been called since the last dump.
     debug_dumps_done: u32,
@@ -152,15 +160,6 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
         return None;
     }
 
-    if env.options.print_fps {
-        env.framework_state
-            .core_animation
-            .composition
-            .fps_counter
-            .get_or_insert_with(FpsCounter::start)
-            .count_frame(format_args!("Core Animation compositor"));
-    }
-
     let now = Instant::now();
     let interval = 1.0 / 60.0; // 60Hz
     let new_recomposite_next = if let Some(recomposite_next) = env
@@ -218,6 +217,44 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
         env.window().rotation_matrix(),
         env.window().virtual_cursor_visible_at(),
     );
+
+    // Skip drawing and presenting entirely if nothing that affects the image
+    // has changed since the last frame we drew. The window keeps showing the
+    // previous frame. To be safe against things we can't observe (e.g. the
+    // window's contents being lost after it was minimized), a frame is still
+    // drawn every so often.
+    const MAX_TICKS_SKIPPED: u32 = 30;
+    let signature = frame_signature(
+        &env.objc,
+        &window_layers,
+        screen_bounds,
+        scale_hack,
+        &present_frame_args,
+    );
+    {
+        let state = &mut env.framework_state.core_animation.composition;
+        if !force
+            && signature.is_some()
+            && signature == state.last_frame_signature
+            && state.ticks_skipped < MAX_TICKS_SKIPPED
+        {
+            state.ticks_skipped += 1;
+            log_dbg!("Nothing changed, skipping composition");
+            return new_recomposite_next;
+        }
+        state.ticks_skipped = 0;
+        // If the frame can't be fingerprinted, it must always be redrawn.
+        state.last_frame_signature = signature;
+    }
+
+    if env.options.print_fps {
+        env.framework_state
+            .core_animation
+            .composition
+            .fps_counter
+            .get_or_insert_with(FpsCounter::start)
+            .count_frame(format_args!("Core Animation compositor"));
+    }
 
     // TODO: draw status bar if it's not hidden
 
@@ -453,6 +490,116 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
     new_recomposite_next
 }
 
+/// Computes a fingerprint of everything that affects the composited image, so
+/// composition can be skipped when nothing has changed since the last drawn
+/// frame.
+///
+/// Returns [None] if the next frame has to be drawn regardless: that is the
+/// case if any layer has animations (which are advanced, and their delegates
+/// called, as part of drawing) or if a visible layer has a texture that hasn't
+/// been uploaded yet (new `CAEAGLLayer` frame, redrawn bitmap and so on).
+///
+/// This must be called after [display_layers], and traverses the tree in the
+/// same way as [composite_layer_recursive].
+fn frame_signature(
+    objc: &ObjC,
+    window_layers: &[id],
+    screen_bounds: CGRect,
+    scale_hack: u32,
+    present_frame_args: &((u32, u32, u32, u32), Matrix<2>, Option<(f32, f32, bool)>),
+) -> Option<u64> {
+    fn hash_layer_tree(
+        objc: &ObjC,
+        layer: id,
+        parent_opacity: CGFloat,
+        hasher: &mut DefaultHasher,
+        must_redraw: &mut bool,
+    ) {
+        let host_obj = objc.borrow::<CALayerHostObject>(layer);
+
+        layer.hash(hasher);
+        host_obj.hidden.hash(hasher);
+        // Animations are processed even for hidden layers, see
+        // composite_layer_recursive.
+        if !host_obj.animations.is_empty() || !host_obj.anonymous_animations.is_empty() {
+            *must_redraw = true;
+        }
+        if host_obj.hidden {
+            return;
+        }
+
+        let opacity = parent_opacity * host_obj.opacity;
+        let mut scalars = vec![
+            host_obj.opacity,
+            host_obj.bounds.origin.x,
+            host_obj.bounds.origin.y,
+            host_obj.bounds.size.width,
+            host_obj.bounds.size.height,
+            host_obj.position.x,
+            host_obj.position.y,
+            host_obj.anchor_point.x,
+            host_obj.anchor_point.y,
+            host_obj.affine_transform.a,
+            host_obj.affine_transform.b,
+            host_obj.affine_transform.c,
+            host_obj.affine_transform.d,
+            host_obj.affine_transform.tx,
+            host_obj.affine_transform.ty,
+            host_obj.corner_radius,
+        ];
+        host_obj.opaque.hash(hasher);
+        host_obj.background_color.is_some().hash(hasher);
+        if let Some(color) = &host_obj.background_color {
+            scalars.extend_from_slice(&[color.r, color.g, color.b, color.a]);
+        }
+        for scalar in scalars {
+            scalar.to_bits().hash(hasher);
+        }
+
+        // Fully transparent layers aren't drawn, so their textures aren't
+        // uploaded either.
+        let need_texture = host_obj.presented_pixels.is_some()
+            || host_obj.contents != nil
+            || host_obj.cg_context.is_some();
+        if opacity > 0.0 && need_texture && !host_obj.gles_texture_is_up_to_date {
+            *must_redraw = true;
+        }
+
+        host_obj.sublayers.len().hash(hasher);
+        for &sublayer in &host_obj.sublayers {
+            hash_layer_tree(objc, sublayer, opacity, hasher, must_redraw);
+        }
+    }
+
+    let mut hasher = DefaultHasher::new();
+    let mut must_redraw = false;
+
+    screen_bounds.size.width.to_bits().hash(&mut hasher);
+    screen_bounds.size.height.to_bits().hash(&mut hasher);
+    scale_hack.hash(&mut hasher);
+    let (viewport, rotation_matrix, virtual_cursor) = present_frame_args;
+    viewport.hash(&mut hasher);
+    for column in rotation_matrix.columns() {
+        for value in column {
+            value.to_bits().hash(&mut hasher);
+        }
+    }
+    virtual_cursor
+        .map(|(x, y, pressed)| (x.to_bits(), y.to_bits(), pressed))
+        .hash(&mut hasher);
+
+    window_layers.len().hash(&mut hasher);
+    for &root_layer in window_layers {
+        hash_layer_tree(objc, root_layer, 1.0, &mut hasher, &mut must_redraw);
+    }
+
+    if must_redraw {
+        None
+    } else {
+        Some(hasher.finish())
+    }
+}
+
 /// Call `displayIfNeeded` on all relevant layers in the tree, so their bitmaps
 /// are up to date before compositing.
 fn display_layers(env: &mut Environment, root_layer: id) {
@@ -499,10 +646,32 @@ unsafe fn composite_layer_recursive(
         return;
     }
 
+    let opacity = opacity * host_obj.opacity;
+
+    // A fully transparent layer (and thus everything below it) contributes
+    // nothing to the image, so don't waste time uploading textures and drawing
+    // it. Sublayers are still visited so that their animations get processed.
+    if opacity <= 0.0 {
+        let sublayers = env
+            .objc
+            .borrow::<CALayerHostObject>(layer)
+            .sublayers
+            .clone();
+        for child_layer in sublayers {
+            composite_layer_recursive(
+                env,
+                animation_state,
+                child_layer,
+                cumulative_transform,
+                opacity,
+            )
+        }
+        return;
+    }
+
     let window = env.window.as_mut().unwrap();
     let mut gles = window.make_internal_gl_ctx_current();
 
-    let opacity = opacity * host_obj.opacity;
     let cumulative_transform = {
         let CALayerHostObject { bounds, .. } = host_obj;
 

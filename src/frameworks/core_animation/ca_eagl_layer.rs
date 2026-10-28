@@ -96,7 +96,17 @@ pub fn find_fullscreen_eagl_layer(env: &mut Environment) -> id {
             return nil;
         }
 
-        if let Some(&next) = layer_host_obj.sublayers.last() {
+        // Layers that are hidden or fully transparent don't contribute to the
+        // composited image, so they must not prevent the fast path. Apps often
+        // leave such layers on top of the game (e.g. a faded-out overlay view),
+        // and without this check we would be stuck with the very slow
+        // `glReadPixels()` path for the rest of the app's run.
+        let objc = &env.objc;
+        let next = layer_host_obj.sublayers.iter().rev().copied().find(|&sub| {
+            let sub_host_obj: &CALayerHostObject = objc.borrow(sub);
+            !sub_host_obj.hidden && sub_host_obj.opacity > 0.0
+        });
+        if let Some(next) = next {
             layer = next;
         } else {
             break;
