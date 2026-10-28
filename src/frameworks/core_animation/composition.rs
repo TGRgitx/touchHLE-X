@@ -490,6 +490,10 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
     new_recomposite_next
 }
 
+/// Viewport, rotation matrix and virtual cursor position, as passed to
+/// [present_frame].
+type PresentFrameArgs = ((u32, u32, u32, u32), Matrix<2>, Option<(f32, f32, bool)>);
+
 /// Computes a fingerprint of everything that affects the composited image, so
 /// composition can be skipped when nothing has changed since the last drawn
 /// frame.
@@ -506,7 +510,7 @@ fn frame_signature(
     window_layers: &[id],
     screen_bounds: CGRect,
     scale_hack: u32,
-    present_frame_args: &((u32, u32, u32, u32), Matrix<2>, Option<(f32, f32, bool)>),
+    present_frame_args: &PresentFrameArgs,
 ) -> Option<u64> {
     fn hash_layer_tree(
         objc: &ObjC,
