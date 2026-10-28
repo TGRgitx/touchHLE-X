@@ -101,10 +101,24 @@ pub fn find_fullscreen_eagl_layer(env: &mut Environment) -> id {
         // leave such layers on top of the game (e.g. a faded-out overlay view),
         // and without this check we would be stuck with the very slow
         // `glReadPixels()` path for the rest of the app's run.
+        // The same goes for layers entirely outside the screen, e.g. a
+        // notification banner that has slid out of view. The layer we're
+        // looking at is known to cover the screen exactly at this point, so
+        // its sublayers' positions are in screen co-ordinates.
         let objc = &env.objc;
         let next = layer_host_obj.sublayers.iter().rev().copied().find(|&sub| {
             let sub_host_obj: &CALayerHostObject = objc.borrow(sub);
-            !sub_host_obj.hidden && sub_host_obj.opacity > 0.0
+            if sub_host_obj.hidden || sub_host_obj.opacity <= 0.0 {
+                return false;
+            }
+            let frame = sub_host_obj
+                .superlayer_to_layer_transform()
+                .apply_to_rect(sub_host_obj.bounds);
+            let off_screen = frame.origin.x + frame.size.width <= 0.0
+                || frame.origin.y + frame.size.height <= 0.0
+                || frame.origin.x >= screen_bounds.size.width
+                || frame.origin.y >= screen_bounds.size.height;
+            !off_screen
         });
         if let Some(next) = next {
             layer = next;
