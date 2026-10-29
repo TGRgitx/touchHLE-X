@@ -678,15 +678,20 @@ fn transform_for_conversion(env: &mut Environment, this: id, other: id) -> CGAff
 
         if this_superlayer == nil && other_superlayer == nil {
             if need_common_ancestor {
-                panic!("Layers {this:?} and {other:?} have no common ancestor!");
-            } else {
-                break (nil, this_transform, other_transform);
+                // This happens when a layer has been removed from the layer
+                // hierarchy but the app still uses it, e.g. to handle the
+                // end of a touch on a view it has just removed. Apps expect
+                // this to work, so treat the top layers of the two separate
+                // hierarchies as if they share a co-ordinate space.
+                log!(
+                    "Warning: layers {this:?} and {other:?} have no common ancestor, assuming their hierarchies share a co-ordinate space"
+                );
             }
+            break (nil, this_transform, other_transform);
         }
     };
 
-    assert!((common_ancestor == nil) != need_common_ancestor);
-    if need_common_ancestor {
+    if need_common_ancestor && common_ancestor != nil {
         log_dbg!("{this:?} and {other:?}'s common ancestor: {common_ancestor:?}",);
     }
     log_dbg!("{this:?}'s transform in {common_ancestor:?}: {this_transform:?}");
