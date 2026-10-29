@@ -7,7 +7,7 @@
 
 use super::ca_layer::CALayerHostObject;
 use crate::frameworks::core_graphics::{CGPoint, CGRect};
-use crate::objc::{id, msg, msg_class, nil, objc_classes, Class, ClassExports};
+use crate::objc::{id, msg, msg_class, nil, objc_classes, Class, ClassExports, ObjC};
 use crate::Environment;
 
 pub const CLASSES: ClassExports = objc_classes! {
@@ -31,6 +31,17 @@ pub const CLASSES: ClassExports = objc_classes! {
 @end
 
 };
+
+/// Whether `layer` or any of its descendants has animations.
+fn has_animations_in_subtree(objc: &ObjC, layer: id) -> bool {
+    let host_obj: &CALayerHostObject = objc.borrow(layer);
+    !host_obj.animations.is_empty()
+        || !host_obj.anonymous_animations.is_empty()
+        || host_obj
+            .sublayers
+            .iter()
+            .any(|&sublayer| has_animations_in_subtree(objc, sublayer))
+}
 
 /// If there is an opaque `CAEAGLLayer` that covers the entire screen, this
 /// returns a pointer to it. Otherwise, it returns [nil].
@@ -108,9 +119,6 @@ pub fn find_fullscreen_eagl_layer(env: &mut Environment) -> id {
         let objc = &env.objc;
         let next = layer_host_obj.sublayers.iter().rev().copied().find(|&sub| {
             let sub_host_obj: &CALayerHostObject = objc.borrow(sub);
-            if sub_host_obj.hidden || sub_host_obj.opacity <= 0.0 {
-                return false;
-            }
             let frame = sub_host_obj
                 .superlayer_to_layer_transform()
                 .apply_to_rect(sub_host_obj.bounds);
@@ -118,7 +126,12 @@ pub fn find_fullscreen_eagl_layer(env: &mut Environment) -> id {
                 || frame.origin.y + frame.size.height <= 0.0
                 || frame.origin.x >= screen_bounds.size.width
                 || frame.origin.y >= screen_bounds.size.height;
-            !off_screen
+            let invisible = sub_host_obj.hidden || sub_host_obj.opacity <= 0.0 || off_screen;
+            // The values checked above are the final ones, not what's
+            // currently on screen. If there's an animation (e.g. a fade-out)
+            // the layer may still be visible, and the compositor has to keep
+            // running for the animation to progress and finish.
+            !invisible || has_animations_in_subtree(objc, sub)
         });
         if let Some(next) = next {
             layer = next;
