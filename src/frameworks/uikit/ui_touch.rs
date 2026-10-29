@@ -11,7 +11,7 @@ use crate::frameworks::foundation::{NSInteger, NSTimeInterval, NSUInteger};
 use crate::mem::MutVoidPtr;
 use crate::objc::{
     autorelease, id, msg, msg_class, nil, objc_classes, release, retain, ClassExports, HostObject,
-    NSZonePtr,
+    NSZonePtr, ObjC,
 };
 use crate::window::{Coords, Event, FingerId};
 use crate::Environment;
@@ -251,9 +251,17 @@ fn handle_touches_down(env: &mut Environment, map: HashMap<FingerId, Coords>) {
             );
             continue;
         } else {
-            log_dbg!(
-                "Found view {:?} with frame {:?} for touch at {:?} in window {:?}",
+            let view_class = {
+                let class = ObjC::read_isa(view, &env.mem);
+                env.objc
+                    .try_get_class_name(class)
+                    .unwrap_or("?")
+                    .to_string()
+            };
+            log!(
+                "Found view {:?} ({}) with frame {:?} for touch at {:?} in window {:?}",
                 view,
+                view_class,
                 {
                     let f: CGRect = msg![env; view frame];
                     f

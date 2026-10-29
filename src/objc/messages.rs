@@ -274,8 +274,9 @@ Type mismatch when sending message {} to {:?}!
                                 }
                             }
                         }
-                        // Copy the `&'static` reference out so that the borrow of
-                        // `env.objc` that `imp` comes from ends here.
+                        // Copy the `&'static` reference out so that the
+                        // borrow of `env.objc` that `imp` comes from ends
+                        // here.
                         let host_imp = *host_imp;
                         env.objc.host_call_stack.push((receiver, selector));
                         host_imp.call_from_guest(env);

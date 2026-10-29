@@ -40,6 +40,13 @@ pub(super) struct State {
     /// How many consecutive compositor ticks have been skipped because nothing
     /// changed.
     ticks_skipped: u32,
+    /// Whether what's currently on screen came from the compositor (rather
+    /// than being presented directly by the app via the `CAEAGLLayer` fast
+    /// path). If so, it has to be replaced by one last composited frame when
+    /// the fast path becomes usable again, otherwise the old content (e.g. an
+    /// overlay that has since gone away) stays on screen until the app
+    /// presents its next frame.
+    showing_composited_frame: bool,
     /// Diagnostic only: how many times the layer tree has been dumped, and how
     /// many times the compositor has been called since the last dump.
     debug_dumps_done: u32,
@@ -154,10 +161,14 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
         }
     }
 
-    if find_fullscreen_eagl_layer(env) != nil {
-        // No composition done, EAGLContext will present directly.
-        log_dbg!("Using CAEAGLLayer fast path, skipping composition");
-        return None;
+    let fast_path = find_fullscreen_eagl_layer(env) != nil;
+    if fast_path {
+        let state = &mut env.framework_state.core_animation.composition;
+        if !state.showing_composited_frame {
+            // No composition done, EAGLContext will present directly.
+            log_dbg!("Using CAEAGLLayer fast path, skipping composition");
+            return None;
+        }
     }
 
     let now = Instant::now();
@@ -240,9 +251,16 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
         {
             state.ticks_skipped += 1;
             log_dbg!("Nothing changed, skipping composition");
+            if fast_path {
+                // The screen already shows what composition would produce.
+                state.showing_composited_frame = false;
+            }
             return new_recomposite_next;
         }
         state.ticks_skipped = 0;
+        if fast_path {
+            log!("Leaving composition for the CAEAGLLayer fast path: drawing one last composited frame");
+        }
         // If the frame can't be fingerprinted, it must always be redrawn.
         state.last_frame_signature = signature;
     }
@@ -484,6 +502,13 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
     }
     std::mem::drop(gles);
     window.swap_window();
+
+    // After a frame composed for the fast path's benefit, the app presents
+    // directly again, so what's on screen no longer comes from us.
+    env.framework_state
+        .core_animation
+        .composition
+        .showing_composited_frame = !fast_path;
 
     animation_state.update_started_and_finished_animations(env);
 
