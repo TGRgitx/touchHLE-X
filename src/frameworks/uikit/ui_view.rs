@@ -93,6 +93,9 @@ pub(super) struct UIViewHostObject {
     clears_context_before_drawing: bool,
     user_interaction_enabled: bool,
     multiple_touch_enabled: bool,
+    /// `UIViewAutoresizing` bitmask.
+    autoresizing_mask: NSUInteger,
+    autoresizes_subviews: bool,
 }
 impl HostObject for UIViewHostObject {}
 impl Default for UIViewHostObject {
@@ -108,7 +111,116 @@ impl Default for UIViewHostObject {
             clears_context_before_drawing: true,
             user_interaction_enabled: true,
             multiple_touch_enabled: false,
+            autoresizing_mask: 0,
+            autoresizes_subviews: true,
         }
+    }
+}
+
+const AUTORESIZE_FLEXIBLE_LEFT_MARGIN: NSUInteger = 1 << 0;
+const AUTORESIZE_FLEXIBLE_WIDTH: NSUInteger = 1 << 1;
+const AUTORESIZE_FLEXIBLE_RIGHT_MARGIN: NSUInteger = 1 << 2;
+const AUTORESIZE_FLEXIBLE_TOP_MARGIN: NSUInteger = 1 << 3;
+const AUTORESIZE_FLEXIBLE_HEIGHT: NSUInteger = 1 << 4;
+const AUTORESIZE_FLEXIBLE_BOTTOM_MARGIN: NSUInteger = 1 << 5;
+
+/// Computes the new origin and size of a subview along one axis when its
+/// superview's size along that axis changes. The change is shared between
+/// the flexible parts (margin before, size, margin after) in proportion to
+/// their old sizes, or equally if they are all zero.
+fn autoresize_axis(
+    old_parent: CGFloat,
+    new_parent: CGFloat,
+    origin: CGFloat,
+    size: CGFloat,
+    flex: (bool, bool, bool),
+) -> (CGFloat, CGFloat) {
+    let (flex_before, flex_size, flex_after) = flex;
+    let count = flex_before as u32 + flex_size as u32 + flex_after as u32;
+    if count == 0 {
+        return (origin, size);
+    }
+    let after = old_parent - origin - size;
+    let delta = new_parent - old_parent;
+    let mut total = 0.0;
+    if flex_before {
+        total += origin;
+    }
+    if flex_size {
+        total += size;
+    }
+    if flex_after {
+        total += after;
+    }
+    let share = |part: CGFloat| {
+        if total > 0.0 {
+            delta * part / total
+        } else {
+            delta / count as CGFloat
+        }
+    };
+    let new_origin = if flex_before {
+        origin + share(origin)
+    } else {
+        origin
+    };
+    let new_size = if flex_size { size + share(size) } else { size };
+    (new_origin, new_size)
+}
+
+/// Called after the size of `view` has changed: resizes the subviews that
+/// have an autoresizing mask.
+fn autoresize_subviews(env: &mut Environment, view: id, old_size: CGSize, new_size: CGSize) {
+    if old_size.width == new_size.width && old_size.height == new_size.height {
+        return;
+    }
+    let host_obj = env.objc.borrow::<UIViewHostObject>(view);
+    if !host_obj.autoresizes_subviews {
+        return;
+    }
+    let subviews = host_obj.subviews.clone();
+    for subview in subviews {
+        let mask = env
+            .objc
+            .borrow::<UIViewHostObject>(subview)
+            .autoresizing_mask;
+        if mask == 0 {
+            continue;
+        }
+        let frame: CGRect = msg![env; subview frame];
+        let (x, width) = autoresize_axis(
+            old_size.width,
+            new_size.width,
+            frame.origin.x,
+            frame.size.width,
+            (
+                mask & AUTORESIZE_FLEXIBLE_LEFT_MARGIN != 0,
+                mask & AUTORESIZE_FLEXIBLE_WIDTH != 0,
+                mask & AUTORESIZE_FLEXIBLE_RIGHT_MARGIN != 0,
+            ),
+        );
+        let (y, height) = autoresize_axis(
+            old_size.height,
+            new_size.height,
+            frame.origin.y,
+            frame.size.height,
+            (
+                mask & AUTORESIZE_FLEXIBLE_TOP_MARGIN != 0,
+                mask & AUTORESIZE_FLEXIBLE_HEIGHT != 0,
+                mask & AUTORESIZE_FLEXIBLE_BOTTOM_MARGIN != 0,
+            ),
+        );
+        let new_frame = CGRect {
+            origin: CGPoint { x, y },
+            size: CGSize { width, height },
+        };
+        log_dbg!(
+            "Autoresizing {:?} from {:?} to {:?}",
+            subview,
+            frame,
+            new_frame
+        );
+        () = msg![env; subview setFrame:new_frame];
     }
 }
 
@@ -769,7 +881,9 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 - (())setBounds:(CGRect)bounds {
     let layer = env.objc.borrow::<UIViewHostObject>(this).layer;
-    msg![env; layer setBounds:bounds]
+    let old_bounds: CGRect = msg![env; layer bounds];
+    () = msg![env; layer setBounds:bounds];
+    autoresize_subviews(env, this, old_bounds.size, bounds.size);
 }
 - (CGPoint)center {
     // FIXME: what happens if [layer anchorPoint] isn't (0.5, 0.5)?
@@ -786,7 +900,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 - (())setFrame:(CGRect)frame {
     let layer = env.objc.borrow::<UIViewHostObject>(this).layer;
-    msg![env; layer setFrame:frame]
+    let old_bounds: CGRect = msg![env; layer bounds];
+    () = msg![env; layer setFrame:frame];
+    let new_bounds: CGRect = msg![env; layer bounds];
+    autoresize_subviews(env, this, old_bounds.size, new_bounds.size);
 }
 - (CGAffineTransform)transform {
     let layer = env.objc.borrow::<UIViewHostObject>(this).layer;
@@ -937,11 +1054,17 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; this_layer convertRect:rect toLayer:other_layer]
 }
 
+- (NSUInteger)autoresizingMask {
+    env.objc.borrow::<UIViewHostObject>(this).autoresizing_mask
+}
 - (())setAutoresizingMask:(NSUInteger)mask {
-    todo_objc_setter!(this, mask);
+    env.objc.borrow_mut::<UIViewHostObject>(this).autoresizing_mask = mask;
+}
+- (bool)autoresizesSubviews {
+    env.objc.borrow::<UIViewHostObject>(this).autoresizes_subviews
 }
 - (())setAutoresizesSubviews:(bool)enabled {
-    todo_objc_setter!(this, enabled);
+    env.objc.borrow_mut::<UIViewHostObject>(this).autoresizes_subviews = enabled;
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {
