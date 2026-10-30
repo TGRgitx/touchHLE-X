@@ -283,7 +283,9 @@ pub const CLASSES: ClassExports = objc_classes! {
     let host_object = env.objc.borrow_mut::<CALayerHostObject>(this);
     let old_affine_transform = std::mem::replace(&mut host_object.affine_transform, affine_transform);
     if is_implicit_animation_enabled(env, this) && old_affine_transform != affine_transform {
-        log!("TODO: Implicit animation for affineTransform change from {old_affine_transform:?} to {affine_transform:?}");
+        let old_affine_transform: id = msg_class![env; NSValue valueWithCGAffineTransform:old_affine_transform];
+        let affine_transform: id = msg_class![env; NSValue valueWithCGAffineTransform:affine_transform];
+        add_default_implied_basic_animation(env, this, "affineTransform", old_affine_transform, affine_transform);
     }
 }
 

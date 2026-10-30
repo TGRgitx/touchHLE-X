@@ -25,6 +25,7 @@ use crate::frameworks::core_animation::ca_animation::{
 use crate::frameworks::core_animation::ca_layer::remove_anonymous_animation;
 use crate::frameworks::core_animation::{ca_layer::CALayerHostObject, CACurrentMediaTime};
 use crate::frameworks::core_foundation::time::CFTimeInterval;
+use crate::frameworks::core_graphics::cg_affine_transform::CGAffineTransform;
 use crate::frameworks::core_graphics::cg_color::CGColorHostObject;
 use crate::frameworks::foundation::ns_string::{from_rust_string, to_rust_string};
 use crate::objc::{id, msg, nil, release, retain, SEL};
@@ -153,6 +154,22 @@ impl State {
             // Only these properties are animatable
             // TODO: Implement for all properties
             match &*key_path {
+                "affineTransform" => {
+                    // TODO: byValue is not supported
+                    // TODO: This interpolates the matrix components directly,
+                    // which is exact for scaling and translation but not for
+                    // rotation. Real Core Animation interpolates the
+                    // decomposed transform.
+                    let from_value =
+                        id_as_option(from_value).map(|obj| msg![env; obj CGAffineTransformValue]);
+                    let to_value =
+                        id_as_option(to_value).map(|obj| msg![env; obj CGAffineTransformValue]);
+                    let current_value = presentation.affine_transform;
+                    let from_value: CGAffineTransform = from_value.unwrap_or(current_value);
+                    let to_value: CGAffineTransform = to_value.unwrap_or(current_value);
+                    presentation.affine_transform =
+                        lerp_affine_transform(from_value, to_value, interpolation_amount);
+                }
                 "anchorPoint" => {
                     let from_value =
                         id_as_option(from_value).map(|obj| msg![env; obj CGPointValue]);
@@ -335,6 +352,22 @@ where
         // value of keyPath in the target layer’s presentation layer and the
         // current value of keyPath in the target layer’s presentation layer.
         unimplemented!()
+    }
+}
+
+fn lerp_affine_transform(
+    from: CGAffineTransform,
+    to: CGAffineTransform,
+    t: f32,
+) -> CGAffineTransform {
+    let lerp = |from: f32, to: f32| from + (to - from) * t;
+    CGAffineTransform {
+        a: lerp(from.a, to.a),
+        b: lerp(from.b, to.b),
+        c: lerp(from.c, to.c),
+        d: lerp(from.d, to.d),
+        tx: lerp(from.tx, to.tx),
+        ty: lerp(from.ty, to.ty),
     }
 }
 
